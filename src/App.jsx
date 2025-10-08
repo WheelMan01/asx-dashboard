@@ -16,7 +16,7 @@ function App() {
   const [notification, setNotification] = useState(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [apiKey, setApiKey] = useState('');
-  const [showApiSetup, setShowApiSetup] = useState(false);
+  const [showApiSetup, setShowApiSetup] = useState(true);
   const [stockData, setStockData] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isLive, setIsLive] = useState(false);
