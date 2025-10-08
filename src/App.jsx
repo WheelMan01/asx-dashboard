@@ -6,7 +6,7 @@ function App() {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [selectedStock, setSelectedStock] = useState(null);
   const [filter, setFilter] = useState('all');
-  const [watchlist, setWatchlist] = useState(['BHP', 'CBA']);
+  const [watchlist, setWatchlist] = useState(['AAPL', 'MSFT']);
   const [timePeriod, setTimePeriod] = useState('1D');
   const [alerts, setAlerts] = useState([]);
   const [showAlertForm, setShowAlertForm] = useState(false);
@@ -105,13 +105,13 @@ function App() {
     
     try {
       const symbols = [
-        { symbol: 'BHP.AX', name: 'BHP Group' },
-        { symbol: 'CBA.AX', name: 'Commonwealth Bank' },
-        { symbol: 'CSL.AX', name: 'CSL Limited' },
-        { symbol: 'WES.AX', name: 'Wesfarmers' },
-        { symbol: 'FMG.AX', name: 'Fortescue Metals' },
-        { symbol: 'NAB.AX', name: 'National Australia Bank' },
-        { symbol: 'WOW.AX', name: 'Woolworths Group' },
+        { symbol: 'AAPL', name: 'Apple Inc.' },
+        { symbol: 'MSFT', name: 'Microsoft Corporation' },
+        { symbol: 'GOOGL', name: 'Alphabet Inc.' },
+        { symbol: 'TSLA', name: 'Tesla Inc.' },
+        { symbol: 'NVDA', name: 'NVIDIA Corporation' },
+        { symbol: 'META', name: 'Meta Platforms' },
+        { symbol: 'AMZN', name: 'Amazon.com Inc.' },
       ];
 
       const stockPromises = symbols.map(async ({ symbol, name }) => {
@@ -144,7 +144,7 @@ function App() {
             const targetMultiplier = analysis.prediction === 'Bullish' ? 1 + (analysis.confidence / 1000) : 1 - (analysis.confidence / 1000);
             
             return {
-              symbol: symbol.replace('.AX', ''),
+              symbol: symbol,
               name,
               prediction: analysis.prediction,
               confidence: analysis.confidence,
@@ -194,13 +194,13 @@ function App() {
   };
 
   const allStocks = stockData || [
-    { symbol: 'BHP', name: 'BHP Group', prediction: 'Bullish', confidence: 87, currentPrice: 45.23, targetPrice: 48.50, change: 7.2, volume: '12.5M', marketCap: '228B', rsi: 62 },
-    { symbol: 'CBA', name: 'Commonwealth Bank', prediction: 'Bullish', confidence: 82, currentPrice: 108.45, targetPrice: 112.30, change: 3.5, volume: '8.2M', marketCap: '182B', rsi: 58 },
-    { symbol: 'CSL', name: 'CSL Limited', prediction: 'Bullish', confidence: 79, currentPrice: 287.50, targetPrice: 295.80, change: 2.9, volume: '2.1M', marketCap: '138B', rsi: 55 },
-    { symbol: 'WES', name: 'Wesfarmers', prediction: 'Bullish', confidence: 75, currentPrice: 62.80, targetPrice: 65.40, change: 4.1, volume: '5.3M', marketCap: '71B', rsi: 53 },
-    { symbol: 'FMG', name: 'Fortescue Metals', prediction: 'Bearish', confidence: 71, currentPrice: 18.95, targetPrice: 17.20, change: -9.2, volume: '15.8M', marketCap: '58B', rsi: 28 },
-    { symbol: 'NAB', name: 'National Australia Bank', prediction: 'Bullish', confidence: 68, currentPrice: 32.15, targetPrice: 33.80, change: 5.1, volume: '9.7M', marketCap: '104B', rsi: 51 },
-    { symbol: 'WOW', name: 'Woolworths Group', prediction: 'Bearish', confidence: 65, currentPrice: 38.20, targetPrice: 36.50, change: -4.5, volume: '6.4M', marketCap: '48B', rsi: 32 },
+    { symbol: 'AAPL', name: 'Apple Inc.', prediction: 'Bullish', confidence: 87, currentPrice: 178.23, targetPrice: 185.50, change: 2.8, volume: '52.5M', marketCap: '2.8T', rsi: 62 },
+    { symbol: 'MSFT', name: 'Microsoft Corporation', prediction: 'Bullish', confidence: 82, currentPrice: 378.45, targetPrice: 390.30, change: 1.5, volume: '28.2M', marketCap: '2.8T', rsi: 58 },
+    { symbol: 'GOOGL', name: 'Alphabet Inc.', prediction: 'Bullish', confidence: 79, currentPrice: 142.50, targetPrice: 148.80, change: 2.1, volume: '21.1M', marketCap: '1.8T', rsi: 55 },
+    { symbol: 'TSLA', name: 'Tesla Inc.', prediction: 'Bullish', confidence: 75, currentPrice: 242.80, targetPrice: 255.40, change: 4.3, volume: '85.3M', marketCap: '771B', rsi: 68 },
+    { symbol: 'NVDA', name: 'NVIDIA Corporation', prediction: 'Bullish', confidence: 90, currentPrice: 495.22, targetPrice: 520.00, change: 5.8, volume: '45.8M', marketCap: '1.2T', rsi: 72 },
+    { symbol: 'META', name: 'Meta Platforms', prediction: 'Bullish', confidence: 68, currentPrice: 352.15, targetPrice: 365.80, change: 1.9, volume: '19.7M', marketCap: '894B', rsi: 51 },
+    { symbol: 'AMZN', name: 'Amazon.com Inc.', prediction: 'Bearish', confidence: 65, currentPrice: 138.20, targetPrice: 132.50, change: -2.1, volume: '46.4M', marketCap: '1.4T', rsi: 38 },
   ];
 
   const filteredStocks = allStocks.filter(stock => {
@@ -238,25 +238,25 @@ function App() {
 
   const intradayDataByPeriod = {
     '1D': [
-      { time: '10:00', BHP: 45.10, CBA: 107.80, CSL: 285.20 },
-      { time: '11:00', BHP: 45.15, CBA: 108.00, CSL: 286.50 },
-      { time: '12:00', BHP: 45.08, CBA: 107.90, CSL: 285.80 },
-      { time: '13:00', BHP: 45.20, CBA: 108.20, CSL: 287.00 },
-      { time: '14:00', BHP: 45.18, CBA: 108.30, CSL: 286.80 },
-      { time: '15:00', BHP: 45.23, CBA: 108.45, CSL: 287.50 },
+      { time: '10:00', AAPL: 175.10, MSFT: 375.80, GOOGL: 140.20 },
+      { time: '11:00', AAPL: 176.15, MSFT: 376.00, GOOGL: 141.50 },
+      { time: '12:00', AAPL: 177.08, MSFT: 376.90, GOOGL: 141.80 },
+      { time: '13:00', AAPL: 177.20, MSFT: 377.20, GOOGL: 142.00 },
+      { time: '14:00', AAPL: 177.18, MSFT: 378.30, GOOGL: 142.80 },
+      { time: '15:00', AAPL: 178.23, MSFT: 378.45, GOOGL: 142.50 },
     ],
     '1W': [
-      { day: 'Mon', BHP: 44.50, CBA: 106.20, CSL: 282.00 },
-      { day: 'Tue', BHP: 44.80, CBA: 107.00, CSL: 284.50 },
-      { day: 'Wed', BHP: 45.00, CBA: 107.50, CSL: 285.80 },
-      { day: 'Thu', BHP: 45.15, CBA: 108.00, CSL: 286.90 },
-      { day: 'Fri', BHP: 45.23, CBA: 108.45, CSL: 287.50 },
+      { day: 'Mon', AAPL: 172.50, MSFT: 370.20, GOOGL: 138.00 },
+      { day: 'Tue', AAPL: 174.80, MSFT: 373.00, GOOGL: 139.50 },
+      { day: 'Wed', AAPL: 176.00, MSFT: 375.50, GOOGL: 140.80 },
+      { day: 'Thu', AAPL: 177.15, MSFT: 377.00, GOOGL: 141.90 },
+      { day: 'Fri', AAPL: 178.23, MSFT: 378.45, GOOGL: 142.50 },
     ],
     '1M': [
-      { week: 'W1', BHP: 43.20, CBA: 104.50, CSL: 278.00 },
-      { week: 'W2', BHP: 44.10, CBA: 106.00, CSL: 282.50 },
-      { week: 'W3', BHP: 44.80, CBA: 107.20, CSL: 285.00 },
-      { week: 'W4', BHP: 45.23, CBA: 108.45, CSL: 287.50 },
+      { week: 'W1', AAPL: 165.20, MSFT: 360.50, GOOGL: 132.00 },
+      { week: 'W2', AAPL: 170.10, MSFT: 365.00, GOOGL: 136.50 },
+      { week: 'W3', AAPL: 174.80, MSFT: 372.20, GOOGL: 140.00 },
+      { week: 'W4', AAPL: 178.23, MSFT: 378.45, GOOGL: 142.50 },
     ],
   };
 
@@ -336,7 +336,7 @@ function App() {
         <div className="bg-slate-800 rounded-lg max-w-2xl w-full p-8 border border-slate-700">
           <div className="text-center mb-8">
             <Activity className="w-16 h-16 text-emerald-400 mx-auto mb-4" />
-            <h1 className="text-3xl font-bold mb-2">Enable Live ASX Data</h1>
+            <h1 className="text-3xl font-bold mb-2">Enable Live US Stock Data</h1>
             <p className="text-slate-400">Connect to Alpha Vantage for real-time stock prices</p>
           </div>
 
@@ -381,7 +381,7 @@ function App() {
             <div className="bg-slate-900/50 rounded-lg p-4 text-sm text-slate-400">
               <p className="font-semibold text-slate-300 mb-2">Features with Live Data:</p>
               <ul className="space-y-1">
-                <li>✅ Real ASX stock prices</li>
+                <li>✅ Real US stock prices</li>
                 <li>✅ Auto-refresh every 5 minutes</li>
                 <li>✅ Technical indicators (RSI, SMA)</li>
                 <li>✅ AI predictions based on real data</li>
@@ -415,7 +415,7 @@ function App() {
               <div>
                 <div className="flex items-center gap-2">
                   <h1 className="text-2xl font-bold bg-gradient-to-r from-emerald-400 to-cyan-400 bg-clip-text text-transparent">
-                    ASX Day Trading Dashboard
+                    US Stock Trading Dashboard
                   </h1>
                   {isLive ? (
                     <div className="flex items-center gap-1 px-2 py-1 bg-emerald-500/20 rounded text-emerald-400 text-xs font-semibold">
@@ -472,7 +472,7 @@ function App() {
               </button>
 
               <div className="text-right">
-                <div className="text-sm text-slate-400">ASX Market Time</div>
+                <div className="text-sm text-slate-400">US Market Time</div>
                 <div className="text-lg font-semibold">{currentTime.toLocaleTimeString()}</div>
               </div>
             </div>
