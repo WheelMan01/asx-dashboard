@@ -22,6 +22,38 @@ function App() {
   const [isLive, setIsLive] = useState(false);
   const [lastUpdate, setLastUpdate] = useState(null);
 
+  // Market status helper function
+  const getMarketStatus = () => {
+    const now = new Date();
+    const usEastern = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    const hours = usEastern.getHours();
+    const minutes = usEastern.getMinutes();
+    const day = usEastern.getDay();
+    
+    // Weekend
+    if (day === 0 || day === 6) {
+      return { status: 'Closed', color: 'rose', label: 'Weekend' };
+    }
+    
+    const timeInMinutes = hours * 60 + minutes;
+    const marketOpen = 9 * 60 + 30; // 9:30 AM
+    const marketClose = 16 * 60; // 4:00 PM
+    const preMarketStart = 4 * 60; // 4:00 AM
+    const afterHoursEnd = 20 * 60; // 8:00 PM
+    
+    if (timeInMinutes >= marketOpen && timeInMinutes < marketClose) {
+      return { status: 'Open', color: 'emerald', label: 'Market Open' };
+    } else if (timeInMinutes >= preMarketStart && timeInMinutes < marketOpen) {
+      return { status: 'Pre-Market', color: 'amber', label: 'Pre-Market' };
+    } else if (timeInMinutes >= marketClose && timeInMinutes < afterHoursEnd) {
+      return { status: 'After-Hours', color: 'amber', label: 'After-Hours' };
+    } else {
+      return { status: 'Closed', color: 'rose', label: 'Market Closed' };
+    }
+  };
+
+  const marketStatus = getMarketStatus();
+
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
@@ -428,6 +460,10 @@ function App() {
                       DEMO
                     </div>
                   )}
+                  <div className={`flex items-center gap-1 px-2 py-1 bg-${marketStatus.color}-500/20 rounded text-${marketStatus.color}-400 text-xs font-semibold`}>
+                    <div className={`w-2 h-2 rounded-full bg-${marketStatus.color}-400 ${marketStatus.status === 'Open' ? 'animate-pulse' : ''}`}></div>
+                    {marketStatus.status}
+                  </div>
                 </div>
                 <p className="text-sm text-slate-400">
                   AI-Powered Technical Analysis
@@ -472,8 +508,24 @@ function App() {
               </button>
 
               <div className="text-right">
-                <div className="text-sm text-slate-400">US Market Time</div>
-                <div className="text-lg font-semibold">{currentTime.toLocaleTimeString()}</div>
+                <div className={`flex items-center gap-2 justify-end mb-1`}>
+                  <div className={`w-2 h-2 rounded-full bg-${marketStatus.color}-400 animate-pulse`}></div>
+                  <span className={`text-sm font-semibold text-${marketStatus.color}-400`}>
+                    {marketStatus.label}
+                  </span>
+                </div>
+                <div className="text-xs text-slate-400">US Eastern Time</div>
+                <div className="text-base font-semibold">
+                  {new Date().toLocaleTimeString('en-US', { 
+                    timeZone: 'America/New_York',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit'
+                  })}
+                </div>
+                <div className="text-xs text-slate-500 mt-1">
+                  Local: {currentTime.toLocaleTimeString()}
+                </div>
               </div>
             </div>
           </div>
