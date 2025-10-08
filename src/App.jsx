@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { TrendingUp, TrendingDown, Activity, Target, BarChart3, Calendar, RefreshCw, Filter, Star, Bell, DollarSign, GitCompare, X, Plus, Minus, Check, AlertCircle, Wifi, WifiOff } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
-import { fetchAllStocks, fetchIntradayData, generatePrediction, isAPIConfigured, getAPIInfo } from './api';
 
 function App() {
   const [currentTime, setCurrentTime] = useState(new Date());
