@@ -21,6 +21,9 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [isLive, setIsLive] = useState(false);
   const [lastUpdate, setLastUpdate] = useState(null);
+  const [predictionHistory, setPredictionHistory] = useState([]);
+  const [historicalData, setHistoricalData] = useState(null);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
 
   // Market status helper function
   const getMarketStatus = () => {
@@ -61,10 +64,14 @@ function App() {
 
   useEffect(() => {
     const savedKey = localStorage.getItem('alphaVantageKey');
+    const savedPredictions = localStorage.getItem('predictionHistory');
     if (savedKey) {
       setApiKey(savedKey);
       setShowApiSetup(false);
       fetchLiveData(savedKey);
+    }
+    if (savedPredictions) {
+      setPredictionHistory(JSON.parse(savedPredictions));
     }
   }, []);
 
@@ -76,6 +83,12 @@ function App() {
       return () => clearInterval(interval);
     }
   }, [apiKey, isLive]);
+
+  useEffect(() => {
+    if (apiKey && isLive && compareMode && selectedForCompare.length > 0) {
+      fetchHistoricalData(apiKey, selectedForCompare);
+    }
+  }, [compareMode, selectedForCompare, timePeriod, apiKey, isLive]);
 
   const calculateRSI = (prices, period = 14) => {
     if (prices.length < period) return 50;
@@ -129,6 +142,157 @@ function App() {
       confidence: Math.min(confidence, 95),
       rsi: Math.round(rsi)
     };
+  };
+
+  const savePrediction = (symbol, prediction, price) => {
+    const newPrediction = {
+      id: Date.now(),
+      symbol,
+      prediction,
+      entryPrice: price,
+      timestamp: new Date().toISOString(),
+      checked: false,
+      outcome: null
+    };
+    
+    const updated = [...predictionHistory, newPrediction];
+    setPredictionHistory(updated);
+    localStorage.setItem('predictionHistory', JSON.stringify(updated));
+  };
+
+  const checkPredictions = (currentStockData) => {
+    if (!currentStockData || predictionHistory.length === 0) return;
+    
+    const now = new Date();
+    const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+    
+    let updated = false;
+    const updatedHistory = predictionHistory.map(pred => {
+      if (pred.checked) return pred;
+      
+      const predTime = new Date(pred.timestamp);
+      if (predTime > oneHourAgo) return pred;
+      
+      const stock = currentStockData.find(s => s.symbol === pred.symbol);
+      if (!stock) return pred;
+      
+      const priceChange = ((stock.currentPrice - pred.entryPrice) / pred.entryPrice) * 100;
+      const wasCorrect = (pred.prediction === 'Bullish' && priceChange > 0) || 
+                        (pred.prediction === 'Bearish' && priceChange < 0);
+      
+      updated = true;
+      return {
+        ...pred,
+        checked: true,
+        outcome: wasCorrect,
+        actualChange: priceChange
+      };
+    });
+    
+    if (updated) {
+      setPredictionHistory(updatedHistory);
+      localStorage.setItem('predictionHistory', JSON.stringify(updatedHistory));
+    }
+  };
+
+  const calculateRealAccuracy = () => {
+    const checkedPredictions = predictionHistory.filter(p => p.checked);
+    if (checkedPredictions.length === 0) return null;
+    
+    const correct = checkedPredictions.filter(p => p.outcome).length;
+    return Math.round((correct / checkedPredictions.length) * 100);
+  };
+
+  const getAccuracyByTimeframe = () => {
+    const now = new Date();
+    const timeframes = {
+      '1D': 24 * 60 * 60 * 1000,
+      '1W': 7 * 24 * 60 * 60 * 1000,
+      '1M': 30 * 24 * 60 * 60 * 1000
+    };
+    
+    const cutoff = new Date(now.getTime() - timeframes[timePeriod]);
+    const recentPredictions = predictionHistory.filter(p => 
+      p.checked && new Date(p.timestamp) > cutoff
+    );
+    
+    if (recentPredictions.length === 0) return [];
+    
+    // Group by hour/day/week based on timeframe
+    const grouped = {};
+    recentPredictions.forEach(pred => {
+      const date = new Date(pred.timestamp);
+      let key;
+      
+      if (timePeriod === '1D') {
+        key = `${date.getHours()}:00`;
+      } else if (timePeriod === '1W') {
+        const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+        key = days[date.getDay()];
+      } else {
+        key = `W${Math.ceil(date.getDate() / 7)}`;
+      }
+      
+      if (!grouped[key]) grouped[key] = { correct: 0, total: 0 };
+      grouped[key].total++;
+      if (pred.outcome) grouped[key].correct++;
+    });
+    
+    return Object.entries(grouped).map(([key, data]) => ({
+      time: key,
+      day: key,
+      week: key,
+      accuracy: Math.round((data.correct / data.total) * 100)
+    }));
+  };
+
+  const fetchHistoricalData = async (key, symbols) => {
+    if (!key || symbols.length === 0) return;
+    
+    setIsLoadingHistory(true);
+    try {
+      const interval = timePeriod === '1D' ? '5min' : null;
+      const func = timePeriod === '1D' ? 'TIME_SERIES_INTRADAY' : 'TIME_SERIES_DAILY';
+      
+      const historicalPromises = symbols.map(async (symbol) => {
+        try {
+          let url = `https://www.alphavantage.co/query?function=${func}&symbol=${symbol}&apikey=${key}`;
+          if (interval) url += `&interval=${interval}`;
+          
+          const response = await fetch(url);
+          const data = await response.json();
+          
+          const timeSeriesKey = interval ? `Time Series (${interval})` : 'Time Series (Daily)';
+          const timeSeries = data[timeSeriesKey];
+          
+          if (!timeSeries) return null;
+          
+          const entries = Object.entries(timeSeries).slice(0, timePeriod === '1D' ? 6 : timePeriod === '1W' ? 5 : 4);
+          
+          return {
+            symbol,
+            data: entries.reverse().map(([time, values]) => ({
+              time: time.split(' ')[1] || time,
+              price: parseFloat(values['4. close'])
+            }))
+          };
+        } catch (error) {
+          console.error(`Error fetching history for ${symbol}:`, error);
+          return null;
+        }
+      });
+      
+      const results = await Promise.all(historicalPromises);
+      const validResults = results.filter(r => r !== null);
+      
+      if (validResults.length > 0) {
+        setHistoricalData(validResults);
+      }
+    } catch (error) {
+      console.error('Error fetching historical data:', error);
+    } finally {
+      setIsLoadingHistory(false);
+    }
   };
 
   const fetchLiveData = async (key) => {
@@ -203,6 +367,20 @@ function App() {
         setStockData(validResults);
         setIsLive(true);
         setLastUpdate(new Date());
+        
+        // Save new predictions
+        validResults.forEach(stock => {
+          savePrediction(stock.symbol, stock.prediction, stock.currentPrice);
+        });
+        
+        // Check previous predictions
+        checkPredictions(validResults);
+        
+        // Fetch historical data if in compare mode
+        if (compareMode && selectedForCompare.length > 0) {
+          fetchHistoricalData(key, selectedForCompare);
+        }
+        
         showNotification('Live data updated successfully!');
       } else {
         showNotification('No data received. Check API key.', 'warning');
@@ -265,8 +443,11 @@ function App() {
     ],
   };
 
-  const accuracyData = accuracyDataByPeriod[timePeriod];
-  const avgAccuracy = accuracyData.reduce((acc, curr) => acc + (curr.accuracy || 0), 0) / accuracyData.length;
+  // Use real accuracy data if available, otherwise use demo data
+  const realAccuracyData = getAccuracyByTimeframe();
+  const accuracyData = realAccuracyData.length > 0 ? realAccuracyData : accuracyDataByPeriod[timePeriod];
+  const realAccuracy = calculateRealAccuracy();
+  const avgAccuracy = realAccuracy !== null ? realAccuracy : (accuracyData.reduce((acc, curr) => acc + (curr.accuracy || 0), 0) / accuracyData.length);
 
   const intradayDataByPeriod = {
     '1D': [
@@ -292,7 +473,28 @@ function App() {
     ],
   };
 
-  const intradayData = intradayDataByPeriod[timePeriod];
+  // Convert real historical data to chart format
+  const getRealChartData = () => {
+    if (!historicalData || historicalData.length === 0) return intradayDataByPeriod[timePeriod];
+    
+    const maxLength = Math.max(...historicalData.map(h => h.data.length));
+    const chartData = [];
+    
+    for (let i = 0; i < maxLength; i++) {
+      const dataPoint = {};
+      historicalData.forEach(stock => {
+        if (stock.data[i]) {
+          dataPoint[timePeriod === '1D' ? 'time' : timePeriod === '1W' ? 'day' : 'week'] = stock.data[i].time;
+          dataPoint[stock.symbol] = stock.data[i].price;
+        }
+      });
+      if (Object.keys(dataPoint).length > 1) chartData.push(dataPoint);
+    }
+    
+    return chartData.length > 0 ? chartData : intradayDataByPeriod[timePeriod];
+  };
+
+  const intradayData = getRealChartData();
 
   const showNotification = (message, type = 'success') => {
     setNotification({ message, type });
@@ -739,6 +941,16 @@ function App() {
             <div className="flex items-center gap-2 mb-6">
               <Calendar className="w-6 h-6 text-cyan-400" />
               <h2 className="text-xl font-bold">Accuracy - {timePeriod}</h2>
+              {realAccuracy !== null && (
+                <span className="ml-auto text-xs px-2 py-1 bg-emerald-500/20 text-emerald-400 rounded font-semibold">
+                  LIVE TRACKING
+                </span>
+              )}
+              {realAccuracy === null && (
+                <span className="ml-auto text-xs px-2 py-1 bg-slate-700 text-slate-400 rounded font-semibold">
+                  DEMO DATA
+                </span>
+              )}
             </div>
             <ResponsiveContainer width="100%" height={300}>
               <BarChart data={accuracyData}>
@@ -771,6 +983,19 @@ function App() {
             <div className="flex items-center gap-2 mb-6">
               <GitCompare className="w-6 h-6 text-cyan-400" />
               <h2 className="text-xl font-bold">Stock Comparison - {timePeriod}</h2>
+              {isLoadingHistory && (
+                <Loader className="w-5 h-5 animate-spin text-cyan-400 ml-auto" />
+              )}
+              {!isLoadingHistory && historicalData && historicalData.length > 0 && (
+                <span className="ml-auto text-xs px-2 py-1 bg-emerald-500/20 text-emerald-400 rounded font-semibold">
+                  REAL DATA
+                </span>
+              )}
+              {!isLoadingHistory && (!historicalData || historicalData.length === 0) && (
+                <span className="ml-auto text-xs px-2 py-1 bg-slate-700 text-slate-400 rounded font-semibold">
+                  DEMO DATA
+                </span>
+              )}
             </div>
             <ResponsiveContainer width="100%" height={300}>
               <LineChart data={intradayData}>
@@ -835,6 +1060,59 @@ function App() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          </div>
+        )}
+
+        {predictionHistory.length > 0 && (
+          <div className="mt-6 bg-slate-800/50 backdrop-blur-sm rounded-lg p-6 border border-slate-700/50">
+            <div className="flex items-center gap-2 mb-4">
+              <Target className="w-6 h-6 text-purple-400" />
+              <h2 className="text-xl font-bold">Prediction History</h2>
+              <span className="ml-auto text-xs px-2 py-1 bg-purple-500/20 text-purple-400 rounded font-semibold">
+                {predictionHistory.filter(p => p.checked).length} / {predictionHistory.length} CHECKED
+              </span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {predictionHistory.slice(-6).reverse().map((pred) => (
+                <div key={pred.id} className={`bg-slate-900/50 rounded p-3 border ${
+                  pred.checked 
+                    ? (pred.outcome ? 'border-emerald-500/50' : 'border-rose-500/50')
+                    : 'border-slate-700/30'
+                }`}>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-bold">{pred.symbol}</span>
+                    <span className={`text-xs px-2 py-1 rounded font-semibold ${
+                      pred.prediction === 'Bullish' 
+                        ? 'bg-emerald-500/20 text-emerald-400' 
+                        : 'bg-rose-500/20 text-rose-400'
+                    }`}>
+                      {pred.prediction}
+                    </span>
+                  </div>
+                  <div className="text-xs text-slate-400 mb-1">
+                    Entry: ${pred.entryPrice.toFixed(2)}
+                  </div>
+                  <div className="text-xs text-slate-400 mb-2">
+                    {new Date(pred.timestamp).toLocaleString()}
+                  </div>
+                  {pred.checked && (
+                    <div className={`text-sm font-semibold ${
+                      pred.outcome ? 'text-emerald-400' : 'text-rose-400'
+                    }`}>
+                      {pred.outcome ? '✓ Correct' : '✗ Incorrect'} ({pred.actualChange > 0 ? '+' : ''}{pred.actualChange.toFixed(2)}%)
+                    </div>
+                  )}
+                  {!pred.checked && (
+                    <div className="text-xs text-amber-400">
+                      ⏳ Waiting 1hr to check...
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div className="mt-4 text-center text-sm text-slate-400">
+              Predictions are checked after 1 hour to calculate accuracy
             </div>
           </div>
         )}
