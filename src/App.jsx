@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { TrendingUp, TrendingDown, Activity, Target, BarChart3, Calendar, RefreshCw, Filter, Star, Bell, DollarSign, GitCompare, X, Plus, Minus, Check } from 'lucide-react';
+import { TrendingUp, TrendingDown, Activity, Target, BarChart3, Calendar, RefreshCw, Filter, Star, Bell, DollarSign, GitCompare, X, Plus, Minus, Check, AlertCircle, Wifi, WifiOff } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
+import { fetchAllStocks, fetchIntradayData, generatePrediction, isAPIConfigured, getAPIInfo } from './api';
 
 function App() {
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -15,21 +16,104 @@ function App() {
   const [selectedForCompare, setSelectedForCompare] = useState([]);
   const [notification, setNotification] = useState(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isLiveMode, setIsLiveMode] = useState(false);
+  const [realTimeData, setRealTimeData] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [lastUpdate, setLastUpdate] = useState(null);
+  const [showAPINotice, setShowAPINotice] = useState(false);
+
+  // Demo data as fallback
+  const demoStocks = [
+    { symbol: 'BHP', name: 'BHP Group', prediction: 'Bullish', confidence: 87, currentPrice: 45.23, targetPrice: 48.50, change: 7.2, changePercent: 7.2, volume: '12.5M', marketCap: '228B' },
+    { symbol: 'CBA', name: 'Commonwealth Bank', prediction: 'Bullish', confidence: 82, currentPrice: 108.45, targetPrice: 112.30, change: 3.5, changePercent: 3.5, volume: '8.2M', marketCap: '182B' },
+    { symbol: 'CSL', name: 'CSL Limited', prediction: 'Bullish', confidence: 79, currentPrice: 287.50, targetPrice: 295.80, change: 2.9, changePercent: 2.9, volume: '2.1M', marketCap: '138B' },
+    { symbol: 'WES', name: 'Wesfarmers', prediction: 'Bullish', confidence: 75, currentPrice: 62.80, targetPrice: 65.40, change: 4.1, changePercent: 4.1, volume: '5.3M', marketCap: '71B' },
+    { symbol: 'FMG', name: 'Fortescue Metals', prediction: 'Bearish', confidence: 71, currentPrice: 18.95, targetPrice: 17.20, change: -9.2, changePercent: -9.2, volume: '15.8M', marketCap: '58B' },
+    { symbol: 'NAB', name: 'National Australia Bank', prediction: 'Bullish', confidence: 68, currentPrice: 32.15, targetPrice: 33.80, change: 5.1, changePercent: 5.1, volume: '9.7M', marketCap: '104B' },
+    { symbol: 'WOW', name: 'Woolworths Group', prediction: 'Bearish', confidence: 65, currentPrice: 38.20, targetPrice: 36.50, change: -4.5, changePercent: -4.5, volume: '6.4M', marketCap: '48B' },
+  ];
+
+  const stockNames = {
+    'BHP': 'BHP Group',
+    'CBA': 'Commonwealth Bank',
+    'CSL': 'CSL Limited',
+    'WES': 'Wesfarmers',
+    'FMG': 'Fortescue Metals',
+    'NAB': 'National Australia Bank',
+    'WOW': 'Woolworths Group',
+  };
+
+  const marketCaps = {
+    'BHP': '228B',
+    'CBA': '182B',
+    'CSL': '138B',
+    'WES': '71B',
+    'FMG': '58B',
+    'NAB': '104B',
+    'WOW': '48B',
+  };
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
 
-  const allStocks = [
-    { symbol: 'BHP', name: 'BHP Group', prediction: 'Bullish', confidence: 87, currentPrice: 45.23, targetPrice: 48.50, change: 7.2, volume: '12.5M', marketCap: '228B' },
-    { symbol: 'CBA', name: 'Commonwealth Bank', prediction: 'Bullish', confidence: 82, currentPrice: 108.45, targetPrice: 112.30, change: 3.5, volume: '8.2M', marketCap: '182B' },
-    { symbol: 'CSL', name: 'CSL Limited', prediction: 'Bullish', confidence: 79, currentPrice: 287.50, targetPrice: 295.80, change: 2.9, volume: '2.1M', marketCap: '138B' },
-    { symbol: 'WES', name: 'Wesfarmers', prediction: 'Bullish', confidence: 75, currentPrice: 62.80, targetPrice: 65.40, change: 4.1, volume: '5.3M', marketCap: '71B' },
-    { symbol: 'FMG', name: 'Fortescue Metals', prediction: 'Bearish', confidence: 71, currentPrice: 18.95, targetPrice: 17.20, change: -9.2, volume: '15.8M', marketCap: '58B' },
-    { symbol: 'NAB', name: 'National Australia Bank', prediction: 'Bullish', confidence: 68, currentPrice: 32.15, targetPrice: 33.80, change: 5.1, volume: '9.7M', marketCap: '104B' },
-    { symbol: 'WOW', name: 'Woolworths Group', prediction: 'Bearish', confidence: 65, currentPrice: 38.20, targetPrice: 36.50, change: -4.5, volume: '6.4M', marketCap: '48B' },
-  ];
+  // Fetch real-time data
+  const fetchRealTimeData = async () => {
+    if (!isAPIConfigured()) {
+      setShowAPINotice(true);
+      return;
+    }
+
+    setIsLoading(true);
+    setIsRefreshing(true);
+
+    try {
+      const stockData = await fetchAllStocks();
+      
+      if (stockData && stockData.length > 0) {
+        // Enhance with predictions based on technical indicators
+        const enhancedData = stockData.map(stock => {
+          // For demo, use simple prediction logic
+          // In production, you'd fetch historical data for each stock
+          const prediction = generatePrediction(stock.currentPrice, []);
+          
+          return {
+            ...stock,
+            name: stockNames[stock.symbol] || stock.symbol,
+            marketCap: marketCaps[stock.symbol] || 'N/A',
+            ...prediction,
+          };
+        });
+
+        setRealTimeData(enhancedData);
+        setIsLiveMode(true);
+        setLastUpdate(new Date());
+        showNotification('Live data updated successfully!', 'success');
+      }
+    } catch (error) {
+      console.error('Error fetching real-time data:', error);
+      showNotification('Failed to fetch live data. Using demo mode.', 'warning');
+      setIsLiveMode(false);
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
+  };
+
+  // Auto-refresh every 5 minutes (to stay within API limits)
+  useEffect(() => {
+    if (isLiveMode && isAPIConfigured()) {
+      const interval = setInterval(() => {
+        fetchRealTimeData();
+      }, 5 * 60 * 1000); // 5 minutes
+
+      return () => clearInterval(interval);
+    }
+  }, [isLiveMode]);
+
+  // Use real-time data if available, otherwise demo data
+  const allStocks = isLiveMode && realTimeData.length > 0 ? realTimeData : demoStocks;
 
   const filteredStocks = allStocks.filter(stock => {
     if (filter === 'bullish') return stock.prediction === 'Bullish';
@@ -96,9 +180,23 @@ function App() {
   };
 
   const handleRefresh = () => {
-    setIsRefreshing(true);
-    showNotification('Data refreshed successfully!');
-    setTimeout(() => setIsRefreshing(false), 1000);
+    if (isLiveMode) {
+      fetchRealTimeData();
+    } else {
+      setIsRefreshing(true);
+      showNotification('Demo data refreshed!', 'info');
+      setTimeout(() => setIsRefreshing(false), 1000);
+    }
+  };
+
+  const toggleLiveMode = () => {
+    if (!isLiveMode) {
+      fetchRealTimeData();
+    } else {
+      setIsLiveMode(false);
+      setRealTimeData([]);
+      showNotification('Switched to demo mode', 'info');
+    }
   };
 
   const toggleWatchlist = (symbol) => {
@@ -167,6 +265,42 @@ function App() {
         </div>
       )}
 
+      {showAPINotice && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-800 rounded-lg max-w-2xl w-full p-6 border border-slate-700">
+            <div className="flex items-start gap-4 mb-4">
+              <AlertCircle className="w-8 h-8 text-amber-400 flex-shrink-0" />
+              <div>
+                <h2 className="text-2xl font-bold mb-2">Real-Time Data Setup Required</h2>
+                <p className="text-slate-300 mb-4">
+                  To enable live market data, you need a free API key from Alpha Vantage:
+                </p>
+                <ol className="list-decimal list-inside space-y-2 text-slate-300 mb-4">
+                  <li>Go to <a href="https://www.alphavantage.co/support/#api-key" target="_blank" rel="noopener noreferrer" className="text-cyan-400 underline">alphavantage.co</a> and get your free API key</li>
+                  <li>Open <code className="bg-slate-900 px-2 py-1 rounded">src/api.js</code></li>
+                  <li>Replace <code className="bg-slate-900 px-2 py-1 rounded">YOUR_API_KEY_HERE</code> with your actual key</li>
+                  <li>Save the file and refresh the dashboard</li>
+                </ol>
+                <div className="bg-slate-900 p-4 rounded mb-4">
+                  <p className="text-sm text-slate-400 mb-2">Free Tier Limits:</p>
+                  <ul className="text-sm text-slate-300 space-y-1">
+                    <li>• 25 API requests per day</li>
+                    <li>• 5 requests per minute</li>
+                    <li>• Auto-refresh every 5 minutes</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+            <button
+              onClick={() => setShowAPINotice(false)}
+              className="w-full px-4 py-3 bg-cyan-500 hover:bg-cyan-600 rounded-lg font-semibold"
+            >
+              Continue with Demo Mode
+            </button>
+          </div>
+        </div>
+      )}
+
       <header className="bg-slate-800/50 backdrop-blur-sm border-b border-slate-700/50 sticky top-0 z-40">
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center justify-between flex-wrap gap-4">
@@ -182,8 +316,20 @@ function App() {
             
             <div className="flex items-center gap-3">
               <button
+                onClick={toggleLiveMode}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+                  isLiveMode ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-slate-700 hover:bg-slate-600'
+                }`}
+                title={isLiveMode ? 'Live Mode Active' : 'Demo Mode'}
+              >
+                {isLiveMode ? <Wifi className="w-4 h-4" /> : <WifiOff className="w-4 h-4" />}
+                {isLiveMode ? 'LIVE' : 'DEMO'}
+              </button>
+
+              <button
                 onClick={handleRefresh}
-                className={`flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors ${isRefreshing ? 'opacity-50' : ''}`}
+                disabled={isLoading}
+                className={`flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
               >
                 <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
                 Refresh
@@ -203,7 +349,11 @@ function App() {
               </button>
 
               <div className="text-right">
-                <div className="text-sm text-slate-400">ASX Market Time</div>
+                <div className="text-sm text-slate-400">
+                  {isLiveMode && lastUpdate ? 
+                    `Updated: ${lastUpdate.toLocaleTimeString()}` : 
+                    'ASX Market Time'}
+                </div>
                 <div className="text-lg font-semibold">{currentTime.toLocaleTimeString()}</div>
               </div>
             </div>
@@ -249,6 +399,13 @@ function App() {
       </header>
 
       <div className="container mx-auto px-4 py-8">
+        {isLoading && (
+          <div className="mb-6 bg-cyan-500/20 border border-cyan-500/50 rounded-lg p-4 flex items-center gap-3">
+            <RefreshCw className="w-5 h-5 animate-spin text-cyan-400" />
+            <span className="text-cyan-400 font-semibold">Fetching live market data...</span>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 md:grid-cols-5 gap-6 mb-8">
           <div className="bg-slate-800/50 backdrop-blur-sm rounded-lg p-6 border border-slate-700/50">
             <div className="flex items-center justify-between mb-2">
@@ -373,8 +530,8 @@ function App() {
                     </div>
                     <div className="text-right">
                       <div className="text-lg font-semibold">${stock.currentPrice.toFixed(2)}</div>
-                      <div className={`text-sm font-semibold ${stock.change >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                        {stock.change >= 0 ? '+' : ''}{stock.change}%
+                      <div className={`text-sm font-semibold ${stock.changePercent >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {stock.changePercent >= 0 ? '+' : ''}{stock.changePercent.toFixed(2)}%
                       </div>
                     </div>
                   </div>
@@ -512,6 +669,12 @@ function App() {
         <div className="mt-8 text-center text-sm text-slate-500">
           <p>This dashboard displays AI-generated predictions for educational purposes only.</p>
           <p className="mt-1">Not financial advice. Always conduct your own research before trading.</p>
+          {isLiveMode && (
+            <p className="mt-2 text-emerald-400">
+              <Wifi className="w-4 h-4 inline mr-1" />
+              Live market data • Auto-refreshes every 5 minutes
+            </p>
+          )}
         </div>
       </div>
 
@@ -545,8 +708,8 @@ function App() {
                 <div className="bg-slate-900/50 rounded-lg p-4">
                   <div className="text-slate-400 text-sm mb-1">Current Price</div>
                   <div className="text-2xl font-bold">${selectedStock.currentPrice.toFixed(2)}</div>
-                  <div className={`text-sm font-semibold ${selectedStock.change >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                    {selectedStock.change >= 0 ? '+' : ''}{selectedStock.change}%
+                  <div className={`text-sm font-semibold ${selectedStock.changePercent >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    {selectedStock.changePercent >= 0 ? '+' : ''}{selectedStock.changePercent.toFixed(2)}%
                   </div>
                 </div>
 
