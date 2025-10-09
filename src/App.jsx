@@ -196,54 +196,66 @@ function App() {
   };
 
   const calculateRealAccuracy = () => {
-    const checkedPredictions = predictionHistory.filter(p => p.checked);
-    if (checkedPredictions.length === 0) return null;
-    
-    const correct = checkedPredictions.filter(p => p.outcome).length;
-    return Math.round((correct / checkedPredictions.length) * 100);
+    try {
+      const checkedPredictions = predictionHistory.filter(p => p && p.checked);
+      if (checkedPredictions.length === 0) return null;
+      
+      const correct = checkedPredictions.filter(p => p.outcome).length;
+      return Math.round((correct / checkedPredictions.length) * 100);
+    } catch (error) {
+      console.error('Error calculating accuracy:', error);
+      return null;
+    }
   };
 
   const getAccuracyByTimeframe = () => {
-    const now = new Date();
-    const timeframes = {
-      '1D': 24 * 60 * 60 * 1000,
-      '1W': 7 * 24 * 60 * 60 * 1000,
-      '1M': 30 * 24 * 60 * 60 * 1000
-    };
-    
-    const cutoff = new Date(now.getTime() - timeframes[timePeriod]);
-    const recentPredictions = predictionHistory.filter(p => 
-      p.checked && new Date(p.timestamp) > cutoff
-    );
-    
-    if (recentPredictions.length === 0) return [];
-    
-    // Group by hour/day/week based on timeframe
-    const grouped = {};
-    recentPredictions.forEach(pred => {
-      const date = new Date(pred.timestamp);
-      let key;
+    try {
+      const now = new Date();
+      const timeframes = {
+        '1D': 24 * 60 * 60 * 1000,
+        '1W': 7 * 24 * 60 * 60 * 1000,
+        '1M': 30 * 24 * 60 * 60 * 1000
+      };
       
-      if (timePeriod === '1D') {
-        key = `${date.getHours()}:00`;
-      } else if (timePeriod === '1W') {
-        const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-        key = days[date.getDay()];
-      } else {
-        key = `W${Math.ceil(date.getDate() / 7)}`;
-      }
+      const cutoff = new Date(now.getTime() - timeframes[timePeriod]);
+      const recentPredictions = predictionHistory.filter(p => 
+        p && p.checked && new Date(p.timestamp) > cutoff
+      );
       
-      if (!grouped[key]) grouped[key] = { correct: 0, total: 0 };
-      grouped[key].total++;
-      if (pred.outcome) grouped[key].correct++;
-    });
-    
-    return Object.entries(grouped).map(([key, data]) => ({
-      time: key,
-      day: key,
-      week: key,
-      accuracy: Math.round((data.correct / data.total) * 100)
-    }));
+      if (recentPredictions.length === 0) return [];
+      
+      // Group by hour/day/week based on timeframe
+      const grouped = {};
+      recentPredictions.forEach(pred => {
+        if (!pred || !pred.timestamp) return;
+        
+        const date = new Date(pred.timestamp);
+        let key;
+        
+        if (timePeriod === '1D') {
+          key = `${date.getHours()}:00`;
+        } else if (timePeriod === '1W') {
+          const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+          key = days[date.getDay()];
+        } else {
+          key = `W${Math.ceil(date.getDate() / 7)}`;
+        }
+        
+        if (!grouped[key]) grouped[key] = { correct: 0, total: 0 };
+        grouped[key].total++;
+        if (pred.outcome) grouped[key].correct++;
+      });
+      
+      return Object.entries(grouped).map(([key, data]) => ({
+        time: key,
+        day: key,
+        week: key,
+        accuracy: Math.round((data.correct / data.total) * 100)
+      }));
+    } catch (error) {
+      console.error('Error getting accuracy by timeframe:', error);
+      return [];
+    }
   };
 
   const fetchHistoricalData = async (key, symbols) => {
@@ -368,17 +380,31 @@ function App() {
         setIsLive(true);
         setLastUpdate(new Date());
         
-        // Save new predictions
-        validResults.forEach(stock => {
-          savePrediction(stock.symbol, stock.prediction, stock.currentPrice);
-        });
+        // Save new predictions - with null check
+        try {
+          validResults.forEach(stock => {
+            if (stock && stock.symbol && stock.prediction && stock.currentPrice) {
+              savePrediction(stock.symbol, stock.prediction, stock.currentPrice);
+            }
+          });
+        } catch (error) {
+          console.error('Error saving predictions:', error);
+        }
         
-        // Check previous predictions
-        checkPredictions(validResults);
+        // Check previous predictions - with null check
+        try {
+          checkPredictions(validResults);
+        } catch (error) {
+          console.error('Error checking predictions:', error);
+        }
         
-        // Fetch historical data if in compare mode
+        // Fetch historical data if in compare mode - with null check
         if (compareMode && selectedForCompare.length > 0) {
-          fetchHistoricalData(key, selectedForCompare);
+          try {
+            fetchHistoricalData(key, selectedForCompare);
+          } catch (error) {
+            console.error('Error fetching historical data:', error);
+          }
         }
         
         showNotification('Live data updated successfully!');
@@ -475,23 +501,28 @@ function App() {
 
   // Convert real historical data to chart format
   const getRealChartData = () => {
-    if (!historicalData || historicalData.length === 0) return intradayDataByPeriod[timePeriod];
-    
-    const maxLength = Math.max(...historicalData.map(h => h.data.length));
-    const chartData = [];
-    
-    for (let i = 0; i < maxLength; i++) {
-      const dataPoint = {};
-      historicalData.forEach(stock => {
-        if (stock.data[i]) {
-          dataPoint[timePeriod === '1D' ? 'time' : timePeriod === '1W' ? 'day' : 'week'] = stock.data[i].time;
-          dataPoint[stock.symbol] = stock.data[i].price;
-        }
-      });
-      if (Object.keys(dataPoint).length > 1) chartData.push(dataPoint);
+    try {
+      if (!historicalData || historicalData.length === 0) return intradayDataByPeriod[timePeriod];
+      
+      const maxLength = Math.max(...historicalData.map(h => h.data ? h.data.length : 0));
+      const chartData = [];
+      
+      for (let i = 0; i < maxLength; i++) {
+        const dataPoint = {};
+        historicalData.forEach(stock => {
+          if (stock && stock.data && stock.data[i]) {
+            dataPoint[timePeriod === '1D' ? 'time' : timePeriod === '1W' ? 'day' : 'week'] = stock.data[i].time;
+            dataPoint[stock.symbol] = stock.data[i].price;
+          }
+        });
+        if (Object.keys(dataPoint).length > 1) chartData.push(dataPoint);
+      }
+      
+      return chartData.length > 0 ? chartData : intradayDataByPeriod[timePeriod];
+    } catch (error) {
+      console.error('Error converting chart data:', error);
+      return intradayDataByPeriod[timePeriod];
     }
-    
-    return chartData.length > 0 ? chartData : intradayDataByPeriod[timePeriod];
   };
 
   const intradayData = getRealChartData();
