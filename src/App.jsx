@@ -21,9 +21,6 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [isLive, setIsLive] = useState(false);
   const [lastUpdate, setLastUpdate] = useState(null);
-  const [predictionHistory, setPredictionHistory] = useState([]);
-  const [historicalData, setHistoricalData] = useState(null);
-  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
 
   // Market status helper function
   const getMarketStatus = () => {
@@ -64,14 +61,10 @@ function App() {
 
   useEffect(() => {
     const savedKey = localStorage.getItem('alphaVantageKey');
-    const savedPredictions = localStorage.getItem('predictionHistory');
     if (savedKey) {
       setApiKey(savedKey);
       setShowApiSetup(false);
       fetchLiveData(savedKey);
-    }
-    if (savedPredictions) {
-      setPredictionHistory(JSON.parse(savedPredictions));
     }
   }, []);
 
@@ -84,22 +77,25 @@ function App() {
     }
   }, [apiKey, isLive]);
 
-  useEffect(() => {
-    if (apiKey && isLive && compareMode && selectedForCompare.length > 0) {
-      fetchHistoricalData(apiKey, selectedForCompare);
-    }
-  }, [compareMode, selectedForCompare, timePeriod, apiKey, isLive]);
+  const calculateSMA = (prices, period) => {
+    if (prices.length < period) return prices[prices.length - 1];
+    const sum = prices.slice(0, period).reduce((a, b) => a + b, 0);
+    return sum / period;
+  };
 
   const calculateRSI = (prices, period = 14) => {
-    if (prices.length < period) return 50;
+    if (prices.length < period + 1) return 50;
     
     let gains = 0;
     let losses = 0;
     
     for (let i = 1; i <= period; i++) {
-      const change = prices[i] - prices[i - 1];
-      if (change > 0) gains += change;
-      else losses -= change;
+      const difference = prices[i - 1] - prices[i];
+      if (difference >= 0) {
+        gains += difference;
+      } else {
+        losses -= difference;
+      }
     }
     
     const avgGain = gains / period;
@@ -107,13 +103,9 @@ function App() {
     
     if (avgLoss === 0) return 100;
     const rs = avgGain / avgLoss;
-    return 100 - (100 / (1 + rs));
-  };
-
-  const calculateSMA = (prices, period) => {
-    if (prices.length < period) return prices[prices.length - 1];
-    const slice = prices.slice(-period);
-    return slice.reduce((a, b) => a + b, 0) / period;
+    const rsi = 100 - (100 / (1 + rs));
+    
+    return rsi;
   };
 
   const generatePrediction = (currentPrice, rsi, sma20, sma50, recentPrices) => {
@@ -144,174 +136,10 @@ function App() {
     };
   };
 
-  const savePrediction = (symbol, prediction, price) => {
-    const newPrediction = {
-      id: Date.now(),
-      symbol,
-      prediction,
-      entryPrice: price,
-      timestamp: new Date().toISOString(),
-      checked: false,
-      outcome: null
-    };
-    
-    const updated = [...predictionHistory, newPrediction];
-    setPredictionHistory(updated);
-    localStorage.setItem('predictionHistory', JSON.stringify(updated));
-  };
-
-  const checkPredictions = (currentStockData) => {
-    if (!currentStockData || predictionHistory.length === 0) return;
-    
-    const now = new Date();
-    const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
-    
-    let updated = false;
-    const updatedHistory = predictionHistory.map(pred => {
-      if (pred.checked) return pred;
-      
-      const predTime = new Date(pred.timestamp);
-      if (predTime > oneHourAgo) return pred;
-      
-      const stock = currentStockData.find(s => s.symbol === pred.symbol);
-      if (!stock) return pred;
-      
-      const priceChange = ((stock.currentPrice - pred.entryPrice) / pred.entryPrice) * 100;
-      const wasCorrect = (pred.prediction === 'Bullish' && priceChange > 0) || 
-                        (pred.prediction === 'Bearish' && priceChange < 0);
-      
-      updated = true;
-      return {
-        ...pred,
-        checked: true,
-        outcome: wasCorrect,
-        actualChange: priceChange
-      };
-    });
-    
-    if (updated) {
-      setPredictionHistory(updatedHistory);
-      localStorage.setItem('predictionHistory', JSON.stringify(updatedHistory));
-    }
-  };
-
-  const calculateRealAccuracy = () => {
-    try {
-      const checkedPredictions = predictionHistory.filter(p => p && p.checked);
-      if (checkedPredictions.length === 0) return null;
-      
-      const correct = checkedPredictions.filter(p => p.outcome).length;
-      return Math.round((correct / checkedPredictions.length) * 100);
-    } catch (error) {
-      console.error('Error calculating accuracy:', error);
-      return null;
-    }
-  };
-
-  const getAccuracyByTimeframe = () => {
-    try {
-      const now = new Date();
-      const timeframes = {
-        '1D': 24 * 60 * 60 * 1000,
-        '1W': 7 * 24 * 60 * 60 * 1000,
-        '1M': 30 * 24 * 60 * 60 * 1000
-      };
-      
-      const cutoff = new Date(now.getTime() - timeframes[timePeriod]);
-      const recentPredictions = predictionHistory.filter(p => 
-        p && p.checked && new Date(p.timestamp) > cutoff
-      );
-      
-      if (recentPredictions.length === 0) return [];
-      
-      // Group by hour/day/week based on timeframe
-      const grouped = {};
-      recentPredictions.forEach(pred => {
-        if (!pred || !pred.timestamp) return;
-        
-        const date = new Date(pred.timestamp);
-        let key;
-        
-        if (timePeriod === '1D') {
-          key = `${date.getHours()}:00`;
-        } else if (timePeriod === '1W') {
-          const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-          key = days[date.getDay()];
-        } else {
-          key = `W${Math.ceil(date.getDate() / 7)}`;
-        }
-        
-        if (!grouped[key]) grouped[key] = { correct: 0, total: 0 };
-        grouped[key].total++;
-        if (pred.outcome) grouped[key].correct++;
-      });
-      
-      return Object.entries(grouped).map(([key, data]) => ({
-        time: key,
-        day: key,
-        week: key,
-        accuracy: Math.round((data.correct / data.total) * 100)
-      }));
-    } catch (error) {
-      console.error('Error getting accuracy by timeframe:', error);
-      return [];
-    }
-  };
-
-  const fetchHistoricalData = async (key, symbols) => {
-    if (!key || symbols.length === 0) return;
-    
-    setIsLoadingHistory(true);
-    try {
-      const interval = timePeriod === '1D' ? '5min' : null;
-      const func = timePeriod === '1D' ? 'TIME_SERIES_INTRADAY' : 'TIME_SERIES_DAILY';
-      
-      const historicalPromises = symbols.map(async (symbol) => {
-        try {
-          let url = `https://www.alphavantage.co/query?function=${func}&symbol=${symbol}&apikey=${key}`;
-          if (interval) url += `&interval=${interval}`;
-          
-          const response = await fetch(url);
-          const data = await response.json();
-          
-          const timeSeriesKey = interval ? `Time Series (${interval})` : 'Time Series (Daily)';
-          const timeSeries = data[timeSeriesKey];
-          
-          if (!timeSeries) return null;
-          
-          const entries = Object.entries(timeSeries).slice(0, timePeriod === '1D' ? 6 : timePeriod === '1W' ? 5 : 4);
-          
-          return {
-            symbol,
-            data: entries.reverse().map(([time, values]) => ({
-              time: time.split(' ')[1] || time,
-              price: parseFloat(values['4. close'])
-            }))
-          };
-        } catch (error) {
-          console.error(`Error fetching history for ${symbol}:`, error);
-          return null;
-        }
-      });
-      
-      const results = await Promise.all(historicalPromises);
-      const validResults = results.filter(r => r !== null);
-      
-      if (validResults.length > 0) {
-        setHistoricalData(validResults);
-      }
-    } catch (error) {
-      console.error('Error fetching historical data:', error);
-    } finally {
-      setIsLoadingHistory(false);
-    }
-  };
-
   const fetchLiveData = async (key) => {
-    setIsRefreshing(true);
-    setIsLoading(true);
-    
     try {
+      setIsLoading(true);
+      
       const symbols = [
         { symbol: 'AAPL', name: 'Apple Inc.' },
         { symbol: 'MSFT', name: 'Microsoft Corporation' },
@@ -324,48 +152,72 @@ function App() {
 
       const stockPromises = symbols.map(async ({ symbol, name }) => {
         try {
-          const quoteResponse = await fetch(
-            `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${symbol}&apikey=${key}`
-          );
+          const quoteUrl = `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${symbol}&apikey=${key}`;
+          const quoteResponse = await fetch(quoteUrl);
           const quoteData = await quoteResponse.json();
           
-          const intradayResponse = await fetch(
-            `https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol=${symbol}&interval=5min&apikey=${key}`
-          );
-          const intradayData = await intradayResponse.json();
-          
-          if (quoteData['Global Quote'] && intradayData['Time Series (5min)']) {
-            const quote = quoteData['Global Quote'];
-            const timeSeries = intradayData['Time Series (5min)'];
-            const prices = Object.values(timeSeries).map(d => parseFloat(d['4. close'])).reverse();
-            
-            const currentPrice = parseFloat(quote['05. price']);
-            const change = parseFloat(quote['09. change']);
-            const changePercent = parseFloat(quote['10. change percent'].replace('%', ''));
-            
-            const rsi = calculateRSI(prices);
-            const sma20 = calculateSMA(prices, 20);
-            const sma50 = calculateSMA(prices, 50);
-            
-            const analysis = generatePrediction(currentPrice, rsi, sma20, sma50, prices);
-            
-            const targetMultiplier = analysis.prediction === 'Bullish' ? 1 + (analysis.confidence / 1000) : 1 - (analysis.confidence / 1000);
-            
-            return {
-              symbol: symbol,
-              name,
-              prediction: analysis.prediction,
-              confidence: analysis.confidence,
-              currentPrice,
-              targetPrice: currentPrice * targetMultiplier,
-              change: changePercent,
-              volume: quote['06. volume'],
-              marketCap: 'N/A',
-              rsi: analysis.rsi,
-              sma20,
-              sma50
-            };
+          if (!quoteData['Global Quote'] || Object.keys(quoteData['Global Quote']).length === 0) {
+            console.warn(`No data for ${symbol}`);
+            return null;
           }
+
+          const quote = quoteData['Global Quote'];
+          const currentPrice = parseFloat(quote['05. price']);
+          const change = parseFloat(quote['09. change']);
+          const changePercent = parseFloat(quote['10. change percent'].replace('%', ''));
+          const volume = quote['06. volume'];
+
+          await new Promise(resolve => setTimeout(resolve, 12000));
+
+          const dailyUrl = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${symbol}&apikey=${key}`;
+          const dailyResponse = await fetch(dailyUrl);
+          const dailyData = await dailyResponse.json();
+
+          if (!dailyData['Time Series (Daily)']) {
+            console.warn(`No daily data for ${symbol}`);
+            return null;
+          }
+
+          const timeSeries = dailyData['Time Series (Daily)'];
+          const dates = Object.keys(timeSeries).slice(0, 50);
+          const prices = dates.map(date => parseFloat(timeSeries[date]['4. close']));
+
+          const rsi = calculateRSI(prices);
+          const sma20 = calculateSMA(prices, 20);
+          const sma50 = calculateSMA(prices, 50);
+
+          const predictionData = generatePrediction(currentPrice, rsi, sma20, sma50, prices);
+
+          const targetMultiplier = predictionData.prediction === 'Bullish' ? 1.05 : 0.95;
+          const targetPrice = currentPrice * targetMultiplier;
+
+          const formatVolume = (vol) => {
+            const num = parseInt(vol);
+            if (num >= 1000000) return `${(num / 1000000).toFixed(1)}M`;
+            if (num >= 1000) return `${(num / 1000).toFixed(1)}K`;
+            return num.toString();
+          };
+
+          const formatMarketCap = () => {
+            const caps = {
+              'AAPL': '2.8T', 'MSFT': '2.8T', 'GOOGL': '1.8T',
+              'TSLA': '771B', 'NVDA': '1.2T', 'META': '894B', 'AMZN': '1.4T'
+            };
+            return caps[symbol] || 'N/A';
+          };
+
+          return {
+            symbol: symbol,
+            name,
+            prediction: predictionData.prediction,
+            confidence: predictionData.confidence,
+            currentPrice: currentPrice,
+            targetPrice: parseFloat(targetPrice.toFixed(2)),
+            change: changePercent,
+            volume: formatVolume(volume),
+            marketCap: formatMarketCap(),
+            rsi: predictionData.rsi
+          };
         } catch (error) {
           console.error(`Error fetching ${symbol}:`, error);
           return null;
@@ -379,52 +231,38 @@ function App() {
         setStockData(validResults);
         setIsLive(true);
         setLastUpdate(new Date());
-        
-        // Save new predictions - with null check
-        try {
-          validResults.forEach(stock => {
-            if (stock && stock.symbol && stock.prediction && stock.currentPrice) {
-              savePrediction(stock.symbol, stock.prediction, stock.currentPrice);
-            }
-          });
-        } catch (error) {
-          console.error('Error saving predictions:', error);
-        }
-        
-        // Check previous predictions - with null check
-        try {
-          checkPredictions(validResults);
-        } catch (error) {
-          console.error('Error checking predictions:', error);
-        }
-        
-        // Fetch historical data if in compare mode - with null check
-        if (compareMode && selectedForCompare.length > 0) {
-          try {
-            fetchHistoricalData(key, selectedForCompare);
-          } catch (error) {
-            console.error('Error fetching historical data:', error);
-          }
-        }
-        
         showNotification('Live data updated successfully!');
       } else {
-        showNotification('No data received. Check API key.', 'warning');
+        showNotification('No data received. Check API key or try again later.', 'warning');
+        setIsLive(false);
       }
-      
     } catch (error) {
-      console.error('Error fetching data:', error);
-      showNotification('Failed to fetch live data', 'warning');
+      console.error('Error fetching live data:', error);
+      showNotification('Failed to fetch data. Using demo mode.', 'error');
+      setIsLive(false);
     } finally {
-      setIsRefreshing(false);
       setIsLoading(false);
+      setIsRefreshing(false);
     }
   };
 
-  const saveApiKey = () => {
+  const handleApiSubmit = (e) => {
+    e.preventDefault();
     if (apiKey.trim()) {
       localStorage.setItem('alphaVantageKey', apiKey);
       setShowApiSetup(false);
+      fetchLiveData(apiKey);
+    }
+  };
+
+  const handleDemoMode = () => {
+    setShowApiSetup(false);
+    setIsLive(false);
+  };
+
+  const handleManualRefresh = () => {
+    if (apiKey && !isRefreshing) {
+      setIsRefreshing(true);
       fetchLiveData(apiKey);
     }
   };
@@ -444,6 +282,90 @@ function App() {
     if (filter === 'bearish') return stock.prediction === 'Bearish';
     return true;
   });
+
+  const showNotification = (message, type = 'success') => {
+    setNotification({ message, type });
+    setTimeout(() => setNotification(null), 3000);
+  };
+
+  const toggleWatchlist = (symbol) => {
+    if (watchlist.includes(symbol)) {
+      setWatchlist(watchlist.filter(s => s !== symbol));
+      showNotification(`Removed ${symbol} from watchlist`);
+    } else {
+      setWatchlist([...watchlist, symbol]);
+      showNotification(`Added ${symbol} to watchlist`);
+    }
+  };
+
+  const addAlert = (e) => {
+    e.preventDefault();
+    const formData = new FormData(e.target);
+    const newAlert = {
+      id: Date.now(),
+      symbol: formData.get('symbol'),
+      price: parseFloat(formData.get('price')),
+      condition: formData.get('condition'),
+    };
+    setAlerts([...alerts, newAlert]);
+    setShowAlertForm(false);
+    showNotification(`Alert set for ${newAlert.symbol}`);
+  };
+
+  const executeTrade = (stock, type) => {
+    const shares = prompt(`How many shares of ${stock.symbol} would you like to ${type}?`);
+    if (shares && parseInt(shares) > 0) {
+      const trade = {
+        id: Date.now(),
+        symbol: stock.symbol,
+        type,
+        shares: parseInt(shares),
+        price: stock.currentPrice,
+        total: stock.currentPrice * parseInt(shares),
+        date: new Date().toLocaleDateString(),
+      };
+      
+      if (type === 'buy') {
+        const existing = portfolio.find(p => p.symbol === stock.symbol);
+        if (existing) {
+          const newAvgPrice = ((existing.avgPrice * existing.shares) + trade.total) / (existing.shares + trade.shares);
+          setPortfolio(portfolio.map(p => 
+            p.symbol === stock.symbol 
+              ? { ...p, shares: p.shares + trade.shares, avgPrice: newAvgPrice }
+              : p
+          ));
+        } else {
+          setPortfolio([...portfolio, {
+            symbol: stock.symbol,
+            name: stock.name,
+            shares: trade.shares,
+            avgPrice: trade.price,
+          }]);
+        }
+        showNotification(`Bought ${shares} shares of ${stock.symbol}`);
+      } else {
+        const existing = portfolio.find(p => p.symbol === stock.symbol);
+        if (existing && existing.shares >= trade.shares) {
+          setPortfolio(portfolio.map(p => 
+            p.symbol === stock.symbol 
+              ? { ...p, shares: p.shares - trade.shares }
+              : p
+          ).filter(p => p.shares > 0));
+          showNotification(`Sold ${shares} shares of ${stock.symbol}`);
+        } else {
+          showNotification(`Insufficient shares of ${stock.symbol}`, 'error');
+        }
+      }
+    }
+  };
+
+  const toggleCompare = (symbol) => {
+    if (selectedForCompare.includes(symbol)) {
+      setSelectedForCompare(selectedForCompare.filter(s => s !== symbol));
+    } else if (selectedForCompare.length < 3) {
+      setSelectedForCompare([...selectedForCompare, symbol]);
+    }
+  };
 
   const accuracyDataByPeriod = {
     '1D': [
@@ -469,11 +391,8 @@ function App() {
     ],
   };
 
-  // Use real accuracy data if available, otherwise use demo data
-  const realAccuracyData = getAccuracyByTimeframe();
-  const accuracyData = realAccuracyData.length > 0 ? realAccuracyData : accuracyDataByPeriod[timePeriod];
-  const realAccuracy = calculateRealAccuracy();
-  const avgAccuracy = realAccuracy !== null ? realAccuracy : (accuracyData.reduce((acc, curr) => acc + (curr.accuracy || 0), 0) / accuracyData.length);
+  const accuracyData = accuracyDataByPeriod[timePeriod];
+  const avgAccuracy = accuracyData.reduce((acc, curr) => acc + (curr.accuracy || 0), 0) / accuracyData.length;
 
   const intradayDataByPeriod = {
     '1D': [
@@ -499,152 +418,32 @@ function App() {
     ],
   };
 
-  // Convert real historical data to chart format
-  const getRealChartData = () => {
-    try {
-      if (!historicalData || historicalData.length === 0) return intradayDataByPeriod[timePeriod];
-      
-      const maxLength = Math.max(...historicalData.map(h => h.data ? h.data.length : 0));
-      const chartData = [];
-      
-      for (let i = 0; i < maxLength; i++) {
-        const dataPoint = {};
-        historicalData.forEach(stock => {
-          if (stock && stock.data && stock.data[i]) {
-            dataPoint[timePeriod === '1D' ? 'time' : timePeriod === '1W' ? 'day' : 'week'] = stock.data[i].time;
-            dataPoint[stock.symbol] = stock.data[i].price;
-          }
-        });
-        if (Object.keys(dataPoint).length > 1) chartData.push(dataPoint);
-      }
-      
-      return chartData.length > 0 ? chartData : intradayDataByPeriod[timePeriod];
-    } catch (error) {
-      console.error('Error converting chart data:', error);
-      return intradayDataByPeriod[timePeriod];
-    }
-  };
+  const intradayData = intradayDataByPeriod[timePeriod];
 
-  const intradayData = getRealChartData();
+  const portfolioValue = portfolio.reduce((total, holding) => {
+    const currentStock = allStocks.find(s => s.symbol === holding.symbol);
+    return total + (currentStock ? currentStock.currentPrice * holding.shares : 0);
+  }, 0);
 
-  const showNotification = (message, type = 'success') => {
-    setNotification({ message, type });
-    setTimeout(() => setNotification(null), 3000);
-  };
-
-  const handleRefresh = () => {
-    if (isLive && apiKey) {
-      fetchLiveData(apiKey);
-    } else {
-      setIsRefreshing(true);
-      showNotification('Data refreshed successfully!');
-      setTimeout(() => setIsRefreshing(false), 1000);
-    }
-  };
-
-  const toggleWatchlist = (symbol) => {
-    if (watchlist.includes(symbol)) {
-      setWatchlist(watchlist.filter(s => s !== symbol));
-      showNotification(`${symbol} removed from watchlist`, 'info');
-    } else {
-      setWatchlist([...watchlist, symbol]);
-      showNotification(`${symbol} added to watchlist`);
-    }
-  };
-
-  const addAlert = (symbol, price, type) => {
-    const newAlert = { id: Date.now(), symbol, price, type };
-    setAlerts([...alerts, newAlert]);
-    showNotification(`Alert set for ${symbol} at $${price.toFixed(2)}`);
-    setShowAlertForm(false);
-  };
-
-  const removeAlert = (id) => {
-    setAlerts(alerts.filter(a => a.id !== id));
-    showNotification('Alert removed', 'info');
-  };
-
-  const executeTrade = (symbol, action, quantity) => {
-    const stock = allStocks.find(s => s.symbol === symbol);
-    const trade = {
-      id: Date.now(),
-      symbol,
-      action,
-      quantity,
-      price: stock.currentPrice,
-      total: stock.currentPrice * quantity,
-      timestamp: new Date().toLocaleString(),
-    };
-    setPortfolio([...portfolio, trade]);
-    showNotification(`${action} ${quantity} ${symbol} @ $${stock.currentPrice}`);
-    setSelectedStock(null);
-  };
-
-  const toggleCompareStock = (symbol) => {
-    if (selectedForCompare.includes(symbol)) {
-      setSelectedForCompare(selectedForCompare.filter(s => s !== symbol));
-    } else if (selectedForCompare.length < 3) {
-      setSelectedForCompare([...selectedForCompare, symbol]);
-    } else {
-      showNotification('Maximum 3 stocks for comparison', 'warning');
-    }
-  };
-
-  const portfolioValue = portfolio.reduce((acc, trade) => {
-    const multiplier = trade.action === 'BUY' ? -1 : 1;
-    return acc + (trade.total * multiplier);
+  const portfolioPnL = portfolio.reduce((total, holding) => {
+    const currentStock = allStocks.find(s => s.symbol === holding.symbol);
+    if (!currentStock) return total;
+    return total + ((currentStock.currentPrice - holding.avgPrice) * holding.shares);
   }, 0);
 
   if (showApiSetup) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white flex items-center justify-center p-4">
-        <div className="bg-slate-800 rounded-lg max-w-2xl w-full p-8 border border-slate-700">
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center p-6">
+        <div className="max-w-2xl w-full bg-slate-800/50 backdrop-blur-sm rounded-2xl p-8 border border-slate-700/50 shadow-2xl">
           <div className="text-center mb-8">
-            <Activity className="w-16 h-16 text-emerald-400 mx-auto mb-4" />
+            <Activity className="w-16 h-16 text-cyan-400 mx-auto mb-4" />
             <h1 className="text-3xl font-bold mb-2">Enable Live US Stock Data</h1>
             <p className="text-slate-400">Connect to Alpha Vantage for real-time stock prices</p>
           </div>
 
-          <div className="space-y-6">
-            <div>
-              <h3 className="font-bold text-lg mb-2">Quick Setup (2 minutes):</h3>
-              <ol className="list-decimal list-inside space-y-2 text-slate-300">
-                <li>Go to <a href="https://www.alphavantage.co/support/#api-key" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline">alphavantage.co/support/#api-key</a></li>
-                <li>Enter your email and click "GET FREE API KEY"</li>
-                <li>Copy your API key</li>
-                <li>Paste it below and click "Connect"</li>
-              </ol>
-            </div>
-
-            <div>
-              <label className="block text-sm font-semibold mb-2">Alpha Vantage API Key</label>
-              <input
-                type="text"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder="Enter your API key here..."
-                className="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-lg focus:outline-none focus:border-emerald-500"
-              />
-            </div>
-
-            <div className="flex gap-3">
-              <button
-                onClick={saveApiKey}
-                disabled={!apiKey.trim()}
-                className="flex-1 bg-emerald-500 hover:bg-emerald-600 disabled:bg-slate-700 disabled:cursor-not-allowed px-6 py-3 rounded-lg font-semibold transition-colors"
-              >
-                Connect & Start Live Trading
-              </button>
-              <button
-                onClick={() => setShowApiSetup(false)}
-                className="px-6 py-3 bg-slate-700 hover:bg-slate-600 rounded-lg font-semibold transition-colors"
-              >
-                Use Demo Data
-              </button>
-            </div>
-
-            <div className="bg-slate-900/50 rounded-lg p-4 text-sm text-slate-400">
-              <p className="font-semibold text-slate-300 mb-2">Features with Live Data:</p>
+          <div className="grid md:grid-cols-2 gap-6 mb-8">
+            <div className="bg-slate-900/50 rounded-lg p-6">
+              <h3 className="font-bold text-emerald-400 mb-3">✅ With Live Data:</h3>
               <ul className="space-y-1">
                 <li>✅ Real US stock prices</li>
                 <li>✅ Auto-refresh every 5 minutes</li>
@@ -653,30 +452,71 @@ function App() {
                 <li>✅ Free tier: 25 requests/day</li>
               </ul>
             </div>
+
+            <div className="bg-slate-900/50 rounded-lg p-6">
+              <h3 className="font-bold text-amber-400 mb-3">Demo Mode:</h3>
+              <ul className="space-y-1">
+                <li>📊 Sample stock data</li>
+                <li>🎮 All features functional</li>
+                <li>💡 Perfect for testing</li>
+                <li>⚡ Instant access</li>
+                <li>🔄 Unlimited usage</li>
+              </ul>
+            </div>
           </div>
+
+          <form onSubmit={handleApiSubmit} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium mb-2">Alpha Vantage API Key</label>
+              <input
+                type="text"
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                placeholder="Enter your API key..."
+                className="w-full px-4 py-3 bg-slate-900/50 border border-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500"
+              />
+              <p className="text-sm text-slate-500 mt-2">
+                Get a free key at <a href="https://www.alphavantage.co/support/#api-key" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline">alphavantage.co</a>
+              </p>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                type="submit"
+                className="flex-1 bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-600 hover:to-cyan-600 px-6 py-3 rounded-lg font-semibold transition-all duration-200 transform hover:scale-105"
+              >
+                Connect & Start Live Trading
+              </button>
+              <button
+                type="button"
+                onClick={handleDemoMode}
+                className="flex-1 bg-slate-700 hover:bg-slate-600 px-6 py-3 rounded-lg font-semibold transition-all duration-200"
+              >
+                Use Demo Data
+              </button>
+            </div>
+          </form>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white">
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white p-6">
       {notification && (
-        <div className={`fixed top-4 right-4 z-50 px-6 py-3 rounded-lg shadow-lg flex items-center gap-2 ${
-          notification.type === 'success' ? 'bg-emerald-500' :
-          notification.type === 'warning' ? 'bg-amber-500' :
-          'bg-cyan-500'
+        <div className={`fixed top-4 right-4 z-50 px-6 py-3 rounded-lg shadow-lg ${
+          notification.type === 'success' ? 'bg-emerald-500' : 
+          notification.type === 'warning' ? 'bg-amber-500' : 'bg-rose-500'
         }`}>
-          <Check className="w-5 h-5" />
           {notification.message}
         </div>
       )}
 
-      <header className="bg-slate-800/50 backdrop-blur-sm border-b border-slate-700/50 sticky top-0 z-40">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center justify-between flex-wrap gap-4">
-            <div className="flex items-center gap-3">
-              <Activity className="w-8 h-8 text-emerald-400" />
+      <div className="max-w-7xl mx-auto">
+        <header className="mb-8 bg-slate-800/30 backdrop-blur-sm rounded-lg p-6 border border-slate-700/50">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-center gap-4">
+              <Activity className="w-8 h-8 text-cyan-400" />
               <div>
                 <div className="flex items-center gap-2">
                   <h1 className="text-2xl font-bold bg-gradient-to-r from-emerald-400 to-cyan-400 bg-clip-text text-transparent">
@@ -699,44 +539,32 @@ function App() {
                   </div>
                 </div>
                 <p className="text-sm text-slate-400">
-                  AI-Powered Technical Analysis
-                  {lastUpdate && isLive && (
-                    <span className="ml-2">• Updated {lastUpdate.toLocaleTimeString()}</span>
-                  )}
+                  AI-Powered Technical Analysis • {lastUpdate ? `Updated ${lastUpdate.toLocaleTimeString()}` : 'Demo Mode'}
                 </p>
               </div>
             </div>
-            
-            <div className="flex items-center gap-3">
-              {isLoading && <Loader className="w-5 h-5 animate-spin text-emerald-400" />}
-              
-              <button
-                onClick={() => setShowApiSetup(true)}
-                className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors text-sm"
-              >
-                {isLive ? <Wifi className="w-4 h-4" /> : <WifiOff className="w-4 h-4" />}
-                {isLive ? 'LIVE' : 'DEMO'}
-              </button>
 
+            <div className="flex items-center gap-4">
               <button
-                onClick={handleRefresh}
-                disabled={isRefreshing}
-                className={`flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors ${isRefreshing ? 'opacity-50' : ''}`}
-              >
-                <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-                Refresh
-              </button>
-
-              <button
-                onClick={() => {
-                  setCompareMode(!compareMode);
-                  setSelectedForCompare([]);
-                }}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
-                  compareMode ? 'bg-cyan-500' : 'bg-slate-700 hover:bg-slate-600'
+                onClick={handleManualRefresh}
+                disabled={!isLive || isRefreshing}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-semibold transition-all ${
+                  isLive && !isRefreshing
+                    ? 'bg-cyan-500 hover:bg-cyan-600'
+                    : 'bg-slate-700 cursor-not-allowed'
                 }`}
               >
-                <GitCompare className="w-4 h-4" />
+                <RefreshCw className={`w-5 h-5 ${isRefreshing ? 'animate-spin' : ''}`} />
+                Refresh
+              </button>
+              
+              <button
+                onClick={() => setCompareMode(!compareMode)}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-semibold transition-all ${
+                  compareMode ? 'bg-purple-500' : 'bg-slate-700 hover:bg-slate-600'
+                }`}
+              >
+                <GitCompare className="w-5 h-5" />
                 Compare
               </button>
 
@@ -762,250 +590,309 @@ function App() {
               </div>
             </div>
           </div>
+        </header>
 
-          <div className="flex items-center gap-4 mt-4 flex-wrap">
-            <div className="flex items-center gap-2">
-              <Filter className="w-5 h-5 text-slate-400" />
-              <span className="text-sm text-slate-400">Filter:</span>
+        {isLoading && (
+          <div className="text-center mb-8">
+            <Loader className="w-8 h-8 animate-spin mx-auto text-cyan-400" />
+            <p className="text-slate-400 mt-2">Fetching live market data...</p>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
+          <div className="bg-slate-800/50 backdrop-blur-sm rounded-lg p-4 border border-slate-700/50">
+            <div className="flex items-center gap-3 mb-2">
+              <Target className="w-8 h-8 text-emerald-400" />
+              <div>
+                <div className="text-3xl font-bold">{avgAccuracy.toFixed(1)}%</div>
+                <div className="text-sm text-slate-400">Avg Accuracy</div>
+              </div>
             </div>
-            {['all', 'bullish', 'bearish'].map((f) => (
-              <button
-                key={f}
-                onClick={() => setFilter(f)}
-                className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
-                  filter === f
-                    ? 'bg-emerald-500 text-white'
-                    : 'bg-slate-700 hover:bg-slate-600 text-slate-300'
-                }`}
-              >
-                {f.charAt(0).toUpperCase() + f.slice(1)}
-              </button>
-            ))}
+          </div>
 
-            <div className="flex items-center gap-2 ml-auto">
-              <span className="text-sm text-slate-400">Period:</span>
+          <div className="bg-slate-800/50 backdrop-blur-sm rounded-lg p-4 border border-slate-700/50">
+            <div className="flex items-center gap-3 mb-2">
+              <TrendingUp className="w-8 h-8 text-emerald-400" />
+              <div>
+                <div className="text-3xl font-bold">{filteredStocks.filter(s => s.prediction === 'Bullish').length}</div>
+                <div className="text-sm text-slate-400">Bullish Signals</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-slate-800/50 backdrop-blur-sm rounded-lg p-4 border border-slate-700/50">
+            <div className="flex items-center gap-3 mb-2">
+              <TrendingDown className="w-8 h-8 text-rose-400" />
+              <div>
+                <div className="text-3xl font-bold">{filteredStocks.filter(s => s.prediction === 'Bearish').length}</div>
+                <div className="text-sm text-slate-400">Bearish Signals</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-slate-800/50 backdrop-blur-sm rounded-lg p-4 border border-slate-700/50">
+            <div className="flex items-center gap-3 mb-2">
+              <Star className="w-8 h-8 text-amber-400" />
+              <div>
+                <div className="text-3xl font-bold">{watchlist.length}</div>
+                <div className="text-sm text-slate-400">Watchlist</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-slate-800/50 backdrop-blur-sm rounded-lg p-4 border border-slate-700/50">
+            <div className="flex items-center gap-3 mb-2">
+              <DollarSign className="w-8 h-8 text-cyan-400" />
+              <div>
+                <div className="text-3xl font-bold ${portfolioPnL >= 0 ? 'text-emerald-400' : 'text-rose-400'}">
+                  ${portfolioPnL >= 0 ? '' : '-'}${Math.abs(portfolioPnL).toFixed(0)}
+                </div>
+                <div className="text-sm text-slate-400">Portfolio P&L</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 mb-4">
+          <Filter className="w-5 h-5 text-slate-400" />
+          <span className="text-sm text-slate-400">Filter:</span>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setFilter('all')}
+              className={`px-4 py-1 rounded text-sm font-semibold ${
+                filter === 'all' ? 'bg-cyan-500' : 'bg-slate-700 hover:bg-slate-600'
+              }`}
+            >
+              All
+            </button>
+            <button
+              onClick={() => setFilter('bullish')}
+              className={`px-4 py-1 rounded text-sm font-semibold ${
+                filter === 'bullish' ? 'bg-emerald-500' : 'bg-slate-700 hover:bg-slate-600'
+              }`}
+            >
+              Bullish
+            </button>
+            <button
+              onClick={() => setFilter('bearish')}
+              className={`px-4 py-1 rounded text-sm font-semibold ${
+                filter === 'bearish' ? 'bg-rose-500' : 'bg-slate-700 hover:bg-slate-600'
+              }`}
+            >
+              Bearish
+            </button>
+          </div>
+        </div>
+
+        <div className="grid gap-4 mb-6">
+          <div className="bg-slate-800/50 backdrop-blur-sm rounded-lg p-6 border border-slate-700/50">
+            <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+              <BarChart3 className="w-6 h-6 text-cyan-400" />
+              High Probability Gainers
+            </h2>
+            <div className="space-y-3">
+              {filteredStocks.map((stock) => (
+                <div
+                  key={stock.symbol}
+                  className="bg-slate-900/50 rounded-lg p-4 hover:bg-slate-900/70 transition-all cursor-pointer border border-slate-700/30"
+                  onClick={() => setSelectedStock(stock)}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-3 mb-2">
+                        <h3 className="text-lg font-bold">{stock.symbol}</h3>
+                        <span
+                          className={`px-2 py-1 rounded text-xs font-semibold ${
+                            stock.prediction === 'Bullish'
+                              ? 'bg-emerald-500/20 text-emerald-400'
+                              : 'bg-rose-500/20 text-rose-400'
+                          }`}
+                        >
+                          {stock.prediction}
+                        </span>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleWatchlist(stock.symbol);
+                          }}
+                          className="p-1 hover:bg-slate-700 rounded"
+                        >
+                          <Star
+                            className={`w-4 h-4 ${
+                              watchlist.includes(stock.symbol) ? 'fill-amber-400 text-amber-400' : 'text-slate-400'
+                            }`}
+                          />
+                        </button>
+                        {compareMode && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleCompare(stock.symbol);
+                            }}
+                            className={`px-2 py-1 rounded text-xs font-semibold ${
+                              selectedForCompare.includes(stock.symbol)
+                                ? 'bg-purple-500'
+                                : 'bg-slate-700 hover:bg-slate-600'
+                            }`}
+                          >
+                            {selectedForCompare.includes(stock.symbol) ? 'Selected' : 'Compare'}
+                          </button>
+                        )}
+                        <span className="text-xs px-2 py-1 bg-slate-700 rounded">
+                          RSI {stock.rsi}
+                        </span>
+                      </div>
+                      <p className="text-sm text-slate-400 mb-3">{stock.name}</p>
+                      
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <div className="text-2xl font-bold">${stock.currentPrice.toFixed(2)}</div>
+                          <div className={`text-sm font-semibold ${stock.change >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {stock.change >= 0 ? '+' : ''}{stock.change.toFixed(2)}%
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-sm text-slate-400">Target Price</div>
+                          <div className="text-xl font-bold">${stock.targetPrice.toFixed(2)}</div>
+                          <div className="text-xs text-slate-500">
+                            {stock.prediction === 'Bullish' ? '+' : ''}{((stock.targetPrice - stock.currentPrice) / stock.currentPrice * 100).toFixed(1)}% potential
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="text-right">
+                      <div className="text-sm text-slate-400 mb-2">Confidence</div>
+                      <div className="text-3xl font-bold mb-2">{stock.confidence}%</div>
+                      <div className="w-24 bg-slate-700 rounded-full h-2 mb-3">
+                        <div
+                          className={`h-2 rounded-full ${
+                            stock.prediction === 'Bullish' ? 'bg-emerald-400' : 'bg-rose-400'
+                          }`}
+                          style={{ width: `${stock.confidence}%` }}
+                        />
+                      </div>
+                      <div className="space-y-1 text-xs text-slate-400">
+                        <div>Vol: {stock.volume}</div>
+                        <div>MCap: {stock.marketCap}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 flex gap-2">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        executeTrade(stock, 'buy');
+                      }}
+                      className="flex-1 flex items-center justify-center gap-1 bg-emerald-500 hover:bg-emerald-600 px-3 py-2 rounded font-semibold text-sm"
+                    >
+                      <Plus className="w-4 h-4" />
+                      Buy
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        executeTrade(stock, 'sell');
+                      }}
+                      className="flex-1 flex items-center justify-center gap-1 bg-rose-500 hover:bg-rose-600 px-3 py-2 rounded font-semibold text-sm"
+                    >
+                      <Minus className="w-4 h-4" />
+                      Sell
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+          <div className="bg-slate-800/50 backdrop-blur-sm rounded-lg p-6 border border-slate-700/50">
+            <div className="flex items-center gap-2 mb-6">
+              <Calendar className="w-6 h-6 text-cyan-400" />
+              <h2 className="text-xl font-bold">Accuracy - {timePeriod}</h2>
+            </div>
+            <div className="flex gap-2 mb-4">
               {['1D', '1W', '1M'].map((period) => (
                 <button
                   key={period}
                   onClick={() => setTimePeriod(period)}
-                  className={`px-3 py-1 rounded text-sm font-semibold transition-colors ${
-                    timePeriod === period
-                      ? 'bg-cyan-500 text-white'
-                      : 'bg-slate-700 hover:bg-slate-600 text-slate-300'
+                  className={`px-4 py-1 rounded text-sm font-semibold ${
+                    timePeriod === period ? 'bg-cyan-500' : 'bg-slate-700 hover:bg-slate-600'
                   }`}
                 >
                   {period}
                 </button>
               ))}
             </div>
-          </div>
-        </div>
-      </header>
-
-      <div className="container mx-auto px-4 py-8">
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-6 mb-8">
-          <div className="bg-slate-800/50 backdrop-blur-sm rounded-lg p-6 border border-slate-700/50">
-            <div className="flex items-center justify-between mb-2">
-              <Target className="w-8 h-8 text-emerald-400" />
-              <span className="text-2xl font-bold text-emerald-400">{avgAccuracy.toFixed(1)}%</span>
-            </div>
-            <div className="text-sm text-slate-400">Avg Accuracy</div>
-          </div>
-
-          <div className="bg-slate-800/50 backdrop-blur-sm rounded-lg p-6 border border-slate-700/50">
-            <div className="flex items-center justify-between mb-2">
-              <TrendingUp className="w-8 h-8 text-cyan-400" />
-              <span className="text-2xl font-bold text-cyan-400">
-                {allStocks.filter(s => s.prediction === 'Bullish').length}
-              </span>
-            </div>
-            <div className="text-sm text-slate-400">Bullish Signals</div>
-          </div>
-
-          <div className="bg-slate-800/50 backdrop-blur-sm rounded-lg p-6 border border-slate-700/50">
-            <div className="flex items-center justify-between mb-2">
-              <TrendingDown className="w-8 h-8 text-rose-400" />
-              <span className="text-2xl font-bold text-rose-400">
-                {allStocks.filter(s => s.prediction === 'Bearish').length}
-              </span>
-            </div>
-            <div className="text-sm text-slate-400">Bearish Signals</div>
-          </div>
-
-          <div className="bg-slate-800/50 backdrop-blur-sm rounded-lg p-6 border border-slate-700/50">
-            <div className="flex items-center justify-between mb-2">
-              <Star className="w-8 h-8 text-amber-400" />
-              <span className="text-2xl font-bold text-amber-400">{watchlist.length}</span>
-            </div>
-            <div className="text-sm text-slate-400">Watchlist</div>
-          </div>
-
-          <div className="bg-slate-800/50 backdrop-blur-sm rounded-lg p-6 border border-slate-700/50">
-            <div className="flex items-center justify-between mb-2">
-              <DollarSign className="w-8 h-8 text-purple-400" />
-              <span className={`text-2xl font-bold ${portfolioValue >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                ${Math.abs(portfolioValue).toFixed(0)}
-              </span>
-            </div>
-            <div className="text-sm text-slate-400">Portfolio P&L</div>
-          </div>
-        </div>
-
-        {alerts.length > 0 && (
-          <div className="mb-6 bg-slate-800/50 backdrop-blur-sm rounded-lg p-4 border border-slate-700/50">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <Bell className="w-5 h-5 text-amber-400" />
-                <h3 className="font-bold">Active Alerts</h3>
-              </div>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              {alerts.map((alert) => (
-                <div key={alert.id} className="bg-slate-900/50 rounded p-3 flex items-center justify-between">
-                  <div>
-                    <span className="font-semibold">{alert.symbol}</span>
-                    <span className="text-slate-400 text-sm ml-2">
-                      {alert.type} ${alert.price.toFixed(2)}
-                    </span>
-                  </div>
-                  <button
-                    onClick={() => removeAlert(alert.id)}
-                    className="text-rose-400 hover:text-rose-300"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2 bg-slate-800/50 backdrop-blur-sm rounded-lg p-6 border border-slate-700/50">
-            <div className="flex items-center gap-2 mb-6">
-              <TrendingUp className="w-6 h-6 text-emerald-400" />
-              <h2 className="text-xl font-bold">High Probability Gainers</h2>
-              {compareMode && (
-                <span className="ml-auto text-sm text-cyan-400">
-                  Select up to 3 stocks to compare
-                </span>
-              )}
-            </div>
-            <div className="space-y-4">
-              {filteredStocks.map((stock) => (
-                <div
-                  key={stock.symbol}
-                  className={`bg-slate-900/50 rounded-lg p-4 border transition-all cursor-pointer ${
-                    compareMode && selectedForCompare.includes(stock.symbol)
-                      ? 'border-cyan-400'
-                      : 'border-slate-700/30 hover:border-slate-600/50'
-                  }`}
-                  onClick={() => {
-                    if (compareMode) {
-                      toggleCompareStock(stock.symbol);
-                    } else {
-                      setSelectedStock(stock);
-                    }
-                  }}
-                >
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-3">
-                        <span className="text-lg font-bold">{stock.symbol}</span>
-                        <span className={`px-2 py-1 rounded text-xs font-semibold ${
-                          stock.prediction === 'Bullish' 
-                            ? 'bg-emerald-500/20 text-emerald-400' 
-                            : 'bg-rose-500/20 text-rose-400'
-                        }`}>
-                          {stock.prediction}
-                        </span>
-                        {watchlist.includes(stock.symbol) && (
-                          <Star className="w-4 h-4 text-amber-400 fill-amber-400" />
-                        )}
-                        {stock.rsi && (
-                          <span className={`px-2 py-1 rounded text-xs font-semibold ${
-                            stock.rsi < 30 ? 'bg-emerald-500/20 text-emerald-400' :
-                            stock.rsi > 70 ? 'bg-rose-500/20 text-rose-400' :
-                            'bg-slate-700 text-slate-300'
-                          }`}>
-                            RSI {stock.rsi}
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-sm text-slate-400">{stock.name}</div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-lg font-semibold">${stock.currentPrice.toFixed(2)}</div>
-                      <div className={`text-sm font-semibold ${stock.change >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                        {stock.change >= 0 ? '+' : ''}{stock.change.toFixed(2)}%
-                      </div>
-                    </div>
-                  </div>
-                  
-                  <div className="grid grid-cols-2 gap-4 text-sm">
-                    <div>
-                      <div className="text-slate-400">Target Price</div>
-                      <div className="font-semibold">${stock.targetPrice.toFixed(2)}</div>
-                    </div>
-                    <div>
-                      <div className="text-slate-400">Confidence</div>
-                      <div className="font-semibold">{stock.confidence}%</div>
-                    </div>
-                  </div>
-                  
-                  <div className="mt-3">
-                    <div className="w-full bg-slate-700/30 rounded-full h-2">
-                      <div 
-                        className={`h-2 rounded-full ${
-                          stock.prediction === 'Bullish' ? 'bg-emerald-400' : 'bg-rose-400'
-                        }`}
-                        style={{ width: `${stock.confidence}%` }}
-                      />
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="bg-slate-800/50 backdrop-blur-sm rounded-lg p-6 border border-slate-700/50">
-            <div className="flex items-center gap-2 mb-6">
-              <Calendar className="w-6 h-6 text-cyan-400" />
-              <h2 className="text-xl font-bold">Accuracy - {timePeriod}</h2>
-              {realAccuracy !== null && (
-                <span className="ml-auto text-xs px-2 py-1 bg-emerald-500/20 text-emerald-400 rounded font-semibold">
-                  LIVE TRACKING
-                </span>
-              )}
-              {realAccuracy === null && (
-                <span className="ml-auto text-xs px-2 py-1 bg-slate-700 text-slate-400 rounded font-semibold">
-                  DEMO DATA
-                </span>
-              )}
-            </div>
-            <ResponsiveContainer width="100%" height={300}>
+            <ResponsiveContainer width="100%" height={250}>
               <BarChart data={accuracyData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                <XAxis 
-                  dataKey={timePeriod === '1D' ? 'time' : timePeriod === '1W' ? 'day' : 'week'} 
-                  stroke="#94a3b8" 
-                />
+                <XAxis dataKey={timePeriod === '1D' ? 'time' : timePeriod === '1W' ? 'day' : 'week'} stroke="#94a3b8" />
                 <YAxis stroke="#94a3b8" domain={[0, 100]} />
-                <Tooltip 
-                  contentStyle={{ 
-                    backgroundColor: '#1e293b', 
-                    border: '1px solid #334155',
-                    borderRadius: '8px'
-                  }}
-                  formatter={(value) => [`${value}%`, 'Accuracy']}
+                <Tooltip
+                  contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px' }}
                 />
-                <Bar dataKey="accuracy" fill="#34d399" radius={[8, 8, 0, 0]} />
+                <Bar dataKey="accuracy" fill="#06b6d4" radius={[8, 8, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
             <div className="mt-4 text-center">
               <div className="text-3xl font-bold text-emerald-400">{avgAccuracy.toFixed(1)}%</div>
               <div className="text-sm text-slate-400">Average Accuracy</div>
             </div>
+          </div>
+
+          <div className="bg-slate-800/50 backdrop-blur-sm rounded-lg p-6 border border-slate-700/50">
+            <div className="flex items-center gap-2 mb-4">
+              <DollarSign className="w-6 h-6 text-cyan-400" />
+              <h2 className="text-xl font-bold">Paper Trading Portfolio</h2>
+            </div>
+            {portfolio.length === 0 ? (
+              <div className="text-center py-8 text-slate-400">
+                <p>No positions yet. Start trading!</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {portfolio.map((holding) => {
+                  const currentStock = allStocks.find(s => s.symbol === holding.symbol);
+                  const currentValue = currentStock ? currentStock.currentPrice * holding.shares : 0;
+                  const pnl = currentValue - (holding.avgPrice * holding.shares);
+                  const pnlPercent = (pnl / (holding.avgPrice * holding.shares)) * 100;
+
+                  return (
+                    <div key={holding.symbol} className="bg-slate-900/50 rounded-lg p-4">
+                      <div className="flex justify-between items-start mb-2">
+                        <div>
+                          <div className="font-bold">{holding.symbol}</div>
+                          <div className="text-sm text-slate-400">{holding.name}</div>
+                        </div>
+                        <div className="text-right">
+                          <div className="font-bold">${currentValue.toFixed(2)}</div>
+                          <div className={`text-sm font-semibold ${pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {pnl >= 0 ? '+' : ''}${pnl.toFixed(2)} ({pnl >= 0 ? '+' : ''}{pnlPercent.toFixed(1)}%)
+                          </div>
+                        </div>
+                      </div>
+                      <div className="text-xs text-slate-500">
+                        {holding.shares} shares @ ${holding.avgPrice.toFixed(2)} avg
+                      </div>
+                    </div>
+                  );
+                })}
+                <div className="bg-slate-900/50 rounded-lg p-4 border-t-2 border-cyan-500">
+                  <div className="flex justify-between items-center">
+                    <div className="font-bold">Total Portfolio</div>
+                    <div className="text-right">
+                      <div className="text-xl font-bold">${portfolioValue.toFixed(2)}</div>
+                      <div className={`text-sm font-semibold ${portfolioPnL >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {portfolioPnL >= 0 ? '+' : ''}${portfolioPnL.toFixed(2)}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -1014,290 +901,42 @@ function App() {
             <div className="flex items-center gap-2 mb-6">
               <GitCompare className="w-6 h-6 text-cyan-400" />
               <h2 className="text-xl font-bold">Stock Comparison - {timePeriod}</h2>
-              {isLoadingHistory && (
-                <Loader className="w-5 h-5 animate-spin text-cyan-400 ml-auto" />
-              )}
-              {!isLoadingHistory && historicalData && historicalData.length > 0 && (
-                <span className="ml-auto text-xs px-2 py-1 bg-emerald-500/20 text-emerald-400 rounded font-semibold">
-                  REAL DATA
-                </span>
-              )}
-              {!isLoadingHistory && (!historicalData || historicalData.length === 0) && (
-                <span className="ml-auto text-xs px-2 py-1 bg-slate-700 text-slate-400 rounded font-semibold">
-                  DEMO DATA
-                </span>
-              )}
             </div>
             <ResponsiveContainer width="100%" height={300}>
               <LineChart data={intradayData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                <XAxis 
-                  dataKey={timePeriod === '1D' ? 'time' : timePeriod === '1W' ? 'day' : 'week'} 
-                  stroke="#94a3b8" 
-                />
+                <XAxis dataKey={timePeriod === '1D' ? 'time' : timePeriod === '1W' ? 'day' : 'week'} stroke="#94a3b8" />
                 <YAxis stroke="#94a3b8" />
-                <Tooltip 
-                  contentStyle={{ 
-                    backgroundColor: '#1e293b', 
-                    border: '1px solid #334155',
-                    borderRadius: '8px'
-                  }}
+                <Tooltip
+                  contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px' }}
                 />
                 {selectedForCompare.map((symbol, index) => (
                   <Line
                     key={symbol}
                     type="monotone"
                     dataKey={symbol}
-                    stroke={['#34d399', '#60a5fa', '#a78bfa'][index]}
+                    stroke={['#10b981', '#06b6d4', '#8b5cf6'][index]}
                     strokeWidth={2}
-                    dot={{ r: 3 }}
+                    dot={false}
                   />
                 ))}
               </LineChart>
             </ResponsiveContainer>
-          </div>
-        )}
-
-        {portfolio.length > 0 && (
-          <div className="mt-6 bg-slate-800/50 backdrop-blur-sm rounded-lg p-6 border border-slate-700/50">
-            <div className="flex items-center gap-2 mb-6">
-              <DollarSign className="w-6 h-6 text-purple-400" />
-              <h2 className="text-xl font-bold">Paper Trading Portfolio</h2>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="text-slate-400 border-b border-slate-700">
-                  <tr>
-                    <th className="text-left py-3">Time</th>
-                    <th className="text-left py-3">Action</th>
-                    <th className="text-left py-3">Symbol</th>
-                    <th className="text-right py-3">Qty</th>
-                    <th className="text-right py-3">Price</th>
-                    <th className="text-right py-3">Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {portfolio.slice().reverse().map((trade) => (
-                    <tr key={trade.id} className="border-b border-slate-700/50">
-                      <td className="py-3">{trade.timestamp}</td>
-                      <td className={`py-3 font-semibold ${trade.action === 'BUY' ? 'text-emerald-400' : 'text-rose-400'}`}>
-                        {trade.action}
-                      </td>
-                      <td className="py-3 font-semibold">{trade.symbol}</td>
-                      <td className="text-right py-3">{trade.quantity}</td>
-                      <td className="text-right py-3">${trade.price.toFixed(2)}</td>
-                      <td className="text-right py-3">${trade.total.toFixed(2)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {predictionHistory.length > 0 && (
-          <div className="mt-6 bg-slate-800/50 backdrop-blur-sm rounded-lg p-6 border border-slate-700/50">
-            <div className="flex items-center gap-2 mb-4">
-              <Target className="w-6 h-6 text-purple-400" />
-              <h2 className="text-xl font-bold">Prediction History</h2>
-              <span className="ml-auto text-xs px-2 py-1 bg-purple-500/20 text-purple-400 rounded font-semibold">
-                {predictionHistory.filter(p => p.checked).length} / {predictionHistory.length} CHECKED
-              </span>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              {predictionHistory.slice(-6).reverse().map((pred) => (
-                <div key={pred.id} className={`bg-slate-900/50 rounded p-3 border ${
-                  pred.checked 
-                    ? (pred.outcome ? 'border-emerald-500/50' : 'border-rose-500/50')
-                    : 'border-slate-700/30'
-                }`}>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="font-bold">{pred.symbol}</span>
-                    <span className={`text-xs px-2 py-1 rounded font-semibold ${
-                      pred.prediction === 'Bullish' 
-                        ? 'bg-emerald-500/20 text-emerald-400' 
-                        : 'bg-rose-500/20 text-rose-400'
-                    }`}>
-                      {pred.prediction}
-                    </span>
-                  </div>
-                  <div className="text-xs text-slate-400 mb-1">
-                    Entry: ${pred.entryPrice.toFixed(2)}
-                  </div>
-                  <div className="text-xs text-slate-400 mb-2">
-                    {new Date(pred.timestamp).toLocaleString()}
-                  </div>
-                  {pred.checked && (
-                    <div className={`text-sm font-semibold ${
-                      pred.outcome ? 'text-emerald-400' : 'text-rose-400'
-                    }`}>
-                      {pred.outcome ? '✓ Correct' : '✗ Incorrect'} ({pred.actualChange > 0 ? '+' : ''}{pred.actualChange.toFixed(2)}%)
-                    </div>
-                  )}
-                  {!pred.checked && (
-                    <div className="text-xs text-amber-400">
-                      ⏳ Waiting 1hr to check...
-                    </div>
-                  )}
+            <div className="mt-4 flex gap-4 justify-center">
+              {selectedForCompare.map((symbol, index) => (
+                <div key={symbol} className="flex items-center gap-2">
+                  <div className={`w-3 h-3 rounded-full`} style={{ backgroundColor: ['#10b981', '#06b6d4', '#8b5cf6'][index] }}></div>
+                  <span className="font-semibold">{symbol}</span>
                 </div>
               ))}
-            </div>
-            <div className="mt-4 text-center text-sm text-slate-400">
-              Predictions are checked after 1 hour to calculate accuracy
             </div>
           </div>
         )}
 
         <div className="mt-8 text-center text-sm text-slate-500">
-          <p>This dashboard displays {isLive ? 'live' : 'demo'} data with AI-generated predictions for educational purposes only.</p>
-          <p className="mt-1">Not financial advice. Always conduct your own research before trading.</p>
+          <p>⚠️ This is a demonstration dashboard. Not real financial advice. Do your own research.</p>
         </div>
       </div>
-
-      {selectedStock && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-slate-800 rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto border border-slate-700">
-            <div className="p-6">
-              <div className="flex items-start justify-between mb-6">
-                <div>
-                  <div className="flex items-center gap-3 mb-2">
-                    <h2 className="text-3xl font-bold">{selectedStock.symbol}</h2>
-                    <span className={`px-3 py-1 rounded text-sm font-semibold ${
-                      selectedStock.prediction === 'Bullish' 
-                        ? 'bg-emerald-500/20 text-emerald-400' 
-                        : 'bg-rose-500/20 text-rose-400'
-                    }`}>
-                      {selectedStock.prediction}
-                    </span>
-                    {selectedStock.rsi && (
-                      <span className={`px-3 py-1 rounded text-sm font-semibold ${
-                        selectedStock.rsi < 30 ? 'bg-emerald-500/20 text-emerald-400' :
-                        selectedStock.rsi > 70 ? 'bg-rose-500/20 text-rose-400' :
-                        'bg-slate-700 text-slate-300'
-                      }`}>
-                        RSI {selectedStock.rsi}
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-slate-400">{selectedStock.name}</p>
-                </div>
-                <button
-                  onClick={() => setSelectedStock(null)}
-                  className="text-slate-400 hover:text-white"
-                >
-                  <X className="w-6 h-6" />
-                </button>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4 mb-6">
-                <div className="bg-slate-900/50 rounded-lg p-4">
-                  <div className="text-slate-400 text-sm mb-1">Current Price</div>
-                  <div className="text-2xl font-bold">${selectedStock.currentPrice.toFixed(2)}</div>
-                  <div className={`text-sm font-semibold ${selectedStock.change >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                    {selectedStock.change >= 0 ? '+' : ''}{selectedStock.change.toFixed(2)}%
-                  </div>
-                </div>
-
-                <div className="bg-slate-900/50 rounded-lg p-4">
-                  <div className="text-slate-400 text-sm mb-1">Target Price</div>
-                  <div className="text-2xl font-bold">${selectedStock.targetPrice.toFixed(2)}</div>
-                  <div className="text-sm text-slate-400">
-                    {selectedStock.confidence}% confidence
-                  </div>
-                </div>
-
-                <div className="bg-slate-900/50 rounded-lg p-4">
-                  <div className="text-slate-400 text-sm mb-1">Volume</div>
-                  <div className="text-xl font-bold">{selectedStock.volume}</div>
-                </div>
-
-                <div className="bg-slate-900/50 rounded-lg p-4">
-                  <div className="text-slate-400 text-sm mb-1">Market Cap</div>
-                  <div className="text-xl font-bold">{selectedStock.marketCap}</div>
-                </div>
-              </div>
-
-              {selectedStock.sma20 && (
-                <div className="mb-6 bg-slate-900/50 rounded-lg p-4">
-                  <div className="text-slate-400 text-sm mb-3">Technical Indicators</div>
-                  <div className="grid grid-cols-3 gap-4 text-sm">
-                    <div>
-                      <div className="text-slate-500">RSI</div>
-                      <div className="font-semibold">{selectedStock.rsi}</div>
-                    </div>
-                    <div>
-                      <div className="text-slate-500">SMA 20</div>
-                      <div className="font-semibold">${selectedStock.sma20.toFixed(2)}</div>
-                    </div>
-                    <div>
-                      <div className="text-slate-500">SMA 50</div>
-                      <div className="font-semibold">${selectedStock.sma50.toFixed(2)}</div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              <div className="space-y-3">
-                <button
-                  onClick={() => toggleWatchlist(selectedStock.symbol)}
-                  className={`w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg font-semibold transition-colors ${
-                    watchlist.includes(selectedStock.symbol)
-                      ? 'bg-amber-500 hover:bg-amber-600'
-                      : 'bg-slate-700 hover:bg-slate-600'
-                  }`}
-                >
-                  <Star className={`w-5 h-5 ${watchlist.includes(selectedStock.symbol) ? 'fill-white' : ''}`} />
-                  {watchlist.includes(selectedStock.symbol) ? 'Remove from Watchlist' : 'Add to Watchlist'}
-                </button>
-
-                <button
-                  onClick={() => setShowAlertForm(!showAlertForm)}
-                  className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-slate-700 hover:bg-slate-600 rounded-lg font-semibold transition-colors"
-                >
-                  <Bell className="w-5 h-5" />
-                  Set Price Alert
-                </button>
-
-                {showAlertForm && (
-                  <div className="bg-slate-900/50 rounded-lg p-4 space-y-3">
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => addAlert(selectedStock.symbol, selectedStock.currentPrice * 1.05, 'Above')}
-                        className="flex-1 px-4 py-2 bg-emerald-500 hover:bg-emerald-600 rounded-lg text-sm font-semibold"
-                      >
-                        Alert +5%
-                      </button>
-                      <button
-                        onClick={() => addAlert(selectedStock.symbol, selectedStock.currentPrice * 0.95, 'Below')}
-                        className="flex-1 px-4 py-2 bg-rose-500 hover:bg-rose-600 rounded-lg text-sm font-semibold"
-                      >
-                        Alert -5%
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    onClick={() => executeTrade(selectedStock.symbol, 'BUY', 100)}
-                    className="flex items-center justify-center gap-2 px-4 py-3 bg-emerald-500 hover:bg-emerald-600 rounded-lg font-semibold transition-colors"
-                  >
-                    <Plus className="w-5 h-5" />
-                    Buy 100
-                  </button>
-                  <button
-                    onClick={() => executeTrade(selectedStock.symbol, 'SELL', 100)}
-                    className="flex items-center justify-center gap-2 px-4 py-3 bg-rose-500 hover:bg-rose-600 rounded-lg font-semibold transition-colors"
-                  >
-                    <Minus className="w-5 h-5" />
-                    Sell 100
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
